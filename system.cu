@@ -2,6 +2,7 @@
 #include<math.h>
 #include<stdlib.h>
 #include<string.h>
+#include<time.h>
 #include"mt.h"
 
 __device__ __constant__ int d_Np;
@@ -9,29 +10,6 @@ __device__ __constant__ double d_L;
 #define NUM_BLOCK 32
 #define NUM_THREAD 32
 #define PI 3.1415926535897932384626433
-
-//structure---------------------------------------------------------------------
-typedef struct {
-	double L;
-	double phi;
-	double *x;
-	double *y;
-	int *active;
-	int t;
-	int Np;
-}host_configuration_structure;
-
-typedef struct {
-	//Np and L are provided as __device__ __constant__
-	double *x;
-	double *y;
-	int *active;
-	int t;
-}device_configuration_structure;
-
-typedef struct {
-	int *cell_list;
-}device_list_structure;
 
 //host functions----------------------------------------------------------------
 void init_configuration(double *h_x, double *h_y, double h_L, int h_Np) {
@@ -98,61 +76,67 @@ void h_DBG(int *A, int *B, int dim) {
 
 //device functions--------------------------------------------------------------
 __global__ void d_check_active(double *d_x, double *d_y, int *d_active) {
-	int i_global, j;
+	int i_global;
+	int i, j;
 	int Np = d_Np;
 	double l = 0.5 * d_L;
 	double dx, dy ,dr_square;
 	double diameter_square = 1.0;
 
 	i_global = blockDim.x * blockIdx.x + threadIdx.x;
-
-	if (i_global < Np) {
-		d_active[i_global] = 1;
+	for(i = i_global; i < Np; i += NUM_BLOCK * NUM_THREAD) {
+		d_active[i] = 0;
 		for(j = 0; j < Np; j += 1) {
-			dx = d_x[i_global] - d_x[j];
-			if(dx > l) {
-				dx -= d_L;
-			} else if(dx < -l) {
-				dx += d_L;
-			}
-			dy = d_y[i_global] - d_y[j];
-			if(dy > l) {
-				dy -= d_L;
-			} else if(dy < -l) {
-				dy += d_L;
-			}
-			dr_square = dx * dx + dy * dy;
+			if(j != i) {
+				dx = d_x[i] - d_x[j];
+				if(dx > l) {
+					dx -= d_L;
+				} else if(dx < -l) {
+					dx += d_L;
+				}
+				dy = d_y[i] - d_y[j];
+				if(dy > l) {
+					dy -= d_L;
+				} else if(dy < -l) {
+					dy += d_L;
+				}
+				dr_square = dx * dx + dy * dy;
 
-			if(dr_square < diameter_square) {
-				d_active[i_global] = 1;
-				break;
+				if(dr_square < diameter_square) {
+					d_active[i] = 1;
+					break;
+				}
 			}
 		}
+
 	}
 }
 
 //------------------------------------------------------------------------------
 int main(void) {
 	int i;
-	//host_configuration_structure h_conf;
+	clock_t start, end;
+
 	double *h_x;
 	double *h_y;
 	double h_L;
 	int *h_active;
 	int *h_check_result;
 	int h_Np;
-	//device_configuration_structure d_conf;
+
 	double *d_x;
 	double *d_y;
 	int *d_active;
+
 	//initialize
-	init_genrand(19970303);
+	init_genrand((int)time(NULL));
+
 	//--set variable
-	h_Np = 280;
-	h_L = 25.0;
-	h_phi = PI * 0.25 * h_Np / (h_L * h_L);
+	h_Np = 36000;
+	h_L = 280.0;
 	cudaMemcpyToSymbol(d_Np, &h_Np, sizeof(int), 0, cudaMemcpyHostToDevice);
 	cudaMemcpyToSymbol(d_L, &h_L, sizeof(double), 0, cudaMemcpyHostToDevice);
+
 	//--allocate memory
 	cudaHostAlloc((void **)&h_x, h_Np * sizeof(double), cudaHostAllocMapped);
 	cudaHostAlloc((void **)&h_y, h_Np * sizeof(double), cudaHostAllocMapped);
@@ -167,18 +151,24 @@ int main(void) {
 	init_configuration(h_x, h_y, h_L, h_Np);
 	cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
-	//--make first acriveness list
-	h_check_active(h_x, h_y, h_L, h_Np, h_active);
 
+	//--make first acriveness list
+	start = clock();
+	h_check_active(h_x, h_y, h_L, h_Np, h_active);
+	end = clock();
+	printf("%d [ms]\n", (int)((end - start)*1000 /CLOCKS_PER_SEC ));
+	start = clock();
 	d_check_active<<<NUM_BLOCK, NUM_THREAD>>>(d_x, d_y, d_active);
 	cudaDeviceSynchronize();
 	cudaMemcpy(h_check_result, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
-	printf("\n");
-
-	for(i = 0; i < h_Np; i += 1) {
-		printf("(%d,%d) ", h_active[i], h_check_result[i]);
-	}
-	printf("\n");
+	end = clock();
+	printf("%d [ms]\n", (int)((end - start)*1000 /CLOCKS_PER_SEC ));
+	
+	//printf("\n");
+	//for(i = 0; i < h_Np; i += 1) {
+	//	printf("(%d,%d) ", h_active[i], h_check_result[i]);
+	//}
+	//printf("\n");
 	h_DBG(h_active, h_check_result, h_Np);
 
 	//move particles
