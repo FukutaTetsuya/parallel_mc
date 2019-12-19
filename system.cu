@@ -8,7 +8,7 @@ __device__ __constant__ int d_Np;
 __device__ __constant__ double d_L;
 #define NUM_BLOCK 32
 #define NUM_THREAD 32
-#define PI 3.14159265358979323846264338327950288412
+#define PI 3.1415926535897932384626433
 
 //structure---------------------------------------------------------------------
 typedef struct {
@@ -139,9 +139,8 @@ int main(void) {
 	double *h_y;
 	double h_L;
 	int *h_active;
-	int h_Np;
 	int *h_check_result;
-	double h_phi;
+	int h_Np;
 	//device_configuration_structure d_conf;
 	double *d_x;
 	double *d_y;
@@ -163,6 +162,7 @@ int main(void) {
 	cudaMalloc((void **)&d_x, h_Np * sizeof(double));
 	cudaMalloc((void **)&d_y, h_Np * sizeof(double));
 	cudaMalloc((void **)&d_active, h_Np * sizeof(int));
+
 	//--place particles
 	init_configuration(h_x, h_y, h_L, h_Np);
 	cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
