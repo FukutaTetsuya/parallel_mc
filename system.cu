@@ -34,14 +34,12 @@ typedef struct {
 }device_list_structure;
 
 //host functions----------------------------------------------------------------
-void init_configuration(host_configuration_structure *h_conf) {
+void init_configuration(double *h_x, double *h_y, double h_L, int h_Np) {
 	int i;
-	double L = h_conf->L;
-	int Np = h_conf->Np;
 
-	for(i = 0; i < Np; i += 1) {
-		h_conf->x[i] = L * genrand_real2();
-		h_conf->y[i] = L * genrand_real2();
+	for(i = 0; i < h_Np; i += 1) {
+		h_x[i] = h_L * genrand_real2();
+		h_y[i] = h_L * genrand_real2();
 	}
 }
 
@@ -57,24 +55,33 @@ double pbc_distance(double x1, double x2, double L) {
 	}
 }
 
-void h_check_active(host_configuration_structure *h_conf) {
+void h_check_active(double *h_x, double *h_y, double h_L, int h_Np, int *h_active) {
 	int i, j;
-	int Np = h_conf->Np;
 	double dx, dy, dr_square;
 	double diameter_square = 1.0;
-	double L = h_conf->L;
 
-	for(i = 0; i < Np; i += 1) {
-		h_conf->active[i] = 0;
+	for(i = 0; i < h_Np; i += 1) {
+		h_active[i] = 0;
 	}
-	for(i = 0; i < Np; i += 1) {
+	for(i = 0; i < h_Np; i += 1) {
 		for(j = 0; j < i; j += 1) {
-			dx = pbc_distance(h_conf->x[i], h_conf->x[j], L);
-			dy = pbc_distance(h_conf->y[i], h_conf->y[j], L);
+			dx = h_x[i] - h_x[j];
+			if(dx > 0.5 * h_L) {
+				dx -= h_L;
+			} else if(dx < -0.5 * h_L) {
+				dx += h_L;
+			}
+			dy = h_y[i] - h_y[j];
+			if(dy > 0.5 * h_L) {
+				dy -= h_L;
+			} else if(dy < -0.5 * h_L) {
+				dy += h_L;
+			}
+
 			dr_square = dx * dx + dy * dy;
 			if(dr_square < diameter_square) {
-				h_conf->active[i] = 1;
-				h_conf->active[j] = 1;
+				h_active[i] = 1;
+				h_active[j] = 1;
 			}
 		}
 	}
@@ -86,11 +93,11 @@ void h_DBG(int *A, int *B, int dim) {
 	for(i = 0; i < dim; i += 1) {
 		res += (A[i] - B[i]) * (A[i] - B[i]);
 	}
-	printf("res %d\n", res);
+	printf("res %f\n", res);
 }
 
 //device functions--------------------------------------------------------------
-__global__ void d_check_active(device_configuration_structure *d_conf) {
+__global__ void d_check_active(double *d_x, double *d_y, int *d_active) {
 	int i_global, j;
 	int Np = d_Np;
 	double l = 0.5 * d_L;
@@ -100,15 +107,15 @@ __global__ void d_check_active(device_configuration_structure *d_conf) {
 	i_global = blockDim.x * blockIdx.x + threadIdx.x;
 
 	if (i_global < Np) {
-		d_conf->active[i_global] = 0;
+		d_active[i_global] = 1;
 		for(j = 0; j < Np; j += 1) {
-			dx = d_conf->x[i_global] - d_conf->x[j];
+			dx = d_x[i_global] - d_x[j];
 			if(dx > l) {
 				dx -= d_L;
 			} else if(dx < -l) {
 				dx += d_L;
 			}
-			dy = d_conf->y[i_global] - d_conf->y[j];
+			dy = d_y[i_global] - d_y[j];
 			if(dy > l) {
 				dy -= d_L;
 			} else if(dy < -l) {
@@ -117,7 +124,8 @@ __global__ void d_check_active(device_configuration_structure *d_conf) {
 			dr_square = dx * dx + dy * dy;
 
 			if(dr_square < diameter_square) {
-				d_conf->active[i_global] = 1;
+				d_active[i_global] = 1;
+				break;
 			}
 		}
 	}
@@ -126,46 +134,64 @@ __global__ void d_check_active(device_configuration_structure *d_conf) {
 //------------------------------------------------------------------------------
 int main(void) {
 	int i;
-	host_configuration_structure h_conf;
-	device_configuration_structure d_conf;
-	int h_check_result[280] = {0};
+	//host_configuration_structure h_conf;
+	double *h_x;
+	double *h_y;
+	double h_L;
+	int *h_active;
+	int h_Np;
+	int *h_check_result;
+	double h_phi;
+	//device_configuration_structure d_conf;
+	double *d_x;
+	double *d_y;
+	int *d_active;
 	//initialize
 	init_genrand(19970303);
 	//--set variable
-	h_conf.Np = 280;
-	h_conf.L = 25.0;
-	h_conf.phi = PI * 0.25 * h_conf.Np / (h_conf.L * h_conf.L);
-	cudaMemcpyToSymbol(d_Np, &h_conf.Np, sizeof(int), 0, cudaMemcpyHostToDevice);
-	cudaMemcpyToSymbol(d_L, &h_conf.L, sizeof(double), 0, cudaMemcpyHostToDevice);
+	h_Np = 280;
+	h_L = 25.0;
+	h_phi = PI * 0.25 * h_Np / (h_L * h_L);
+	cudaMemcpyToSymbol(d_Np, &h_Np, sizeof(int), 0, cudaMemcpyHostToDevice);
+	cudaMemcpyToSymbol(d_L, &h_L, sizeof(double), 0, cudaMemcpyHostToDevice);
 	//--allocate memory
-	cudaHostAlloc((void **)&h_conf.x, h_conf.Np * sizeof(double), cudaHostAllocMapped);
-	cudaHostAlloc((void **)&h_conf.y, h_conf.Np * sizeof(double), cudaHostAllocMapped);
-	cudaHostAlloc((void **)&h_conf.active, h_conf.Np * sizeof(int), cudaHostAllocMapped);
-	cudaMalloc((void **)&d_conf.x, h_conf.Np * sizeof(double));
-	cudaMalloc((void **)&d_conf.y, h_conf.Np * sizeof(double));
-	cudaMalloc((void **)&d_conf.active, h_conf.Np * sizeof(int));
+	cudaHostAlloc((void **)&h_x, h_Np * sizeof(double), cudaHostAllocMapped);
+	cudaHostAlloc((void **)&h_y, h_Np * sizeof(double), cudaHostAllocMapped);
+	cudaHostAlloc((void **)&h_active, h_Np * sizeof(int), cudaHostAllocMapped);
+	cudaHostAlloc((void **)&h_check_result, h_Np * sizeof(int), cudaHostAllocMapped);
+
+	cudaMalloc((void **)&d_x, h_Np * sizeof(double));
+	cudaMalloc((void **)&d_y, h_Np * sizeof(double));
+	cudaMalloc((void **)&d_active, h_Np * sizeof(int));
 	//--place particles
-	init_configuration(&h_conf);
-	cudaMemcpy(d_conf.x, h_conf.x, h_conf.Np * sizeof(double), cudaMemcpyHostToDevice);
-	cudaMemcpy(d_conf.y, h_conf.y, h_conf.Np * sizeof(double), cudaMemcpyHostToDevice);
+	init_configuration(h_x, h_y, h_L, h_Np);
+	cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 	//--make first acriveness list
-	h_check_active(&h_conf);
+	h_check_active(h_x, h_y, h_L, h_Np, h_active);
 
-	d_check_active<<<NUM_BLOCK, NUM_THREAD>>>(&d_conf);
+	d_check_active<<<NUM_BLOCK, NUM_THREAD>>>(d_x, d_y, d_active);
 	cudaDeviceSynchronize();
-	cudaMemcpy(h_check_result, d_conf.active, h_conf.Np * sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_check_result, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
+	printf("\n");
 
-	h_DBG(h_conf.active, h_check_result, h_conf.Np);
+	for(i = 0; i < h_Np; i += 1) {
+		printf("(%d,%d) ", h_active[i], h_check_result[i]);
+	}
+	printf("\n");
+	h_DBG(h_active, h_check_result, h_Np);
 
 	//move particles
 
 	//finalize
 	//--free memory
-       	cudaFreeHost(h_conf.x);
-	cudaFreeHost(h_conf.y);
-	cudaFreeHost(h_conf.active);
-	cudaFree(d_conf.x);
-	cudaFree(d_conf.y);
-	cudaFree(d_conf.active);
+       	cudaFreeHost(h_x);
+	cudaFreeHost(h_y);
+	cudaFreeHost(h_active);
+	cudaFree(h_check_result);
+
+	cudaFree(d_x);
+	cudaFree(d_y);
+	cudaFree(d_active);
 	return 0;
 }
