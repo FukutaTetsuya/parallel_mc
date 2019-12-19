@@ -80,13 +80,13 @@ void h_check_active(host_configuration_structure *h_conf) {
 	}
 }
 
-void DBG(int *A, int *B, int dim) {
+void h_DBG(int *A, int *B, int dim) {
 	int i;
 	double res = 0.0;
 	for(i = 0; i < dim; i += 1) {
 		res += (A[i] - B[i]) * (A[i] - B[i]);
 	}
-	printf("res\n");
+	printf("res %d\n", res);
 }
 
 //device functions--------------------------------------------------------------
@@ -109,7 +109,7 @@ __global__ void d_check_active(device_configuration_structure *d_conf) {
 				dx += d_L;
 			}
 			dy = d_conf->y[i_global] - d_conf->y[j];
-			if(dx > l) {
+			if(dy > l) {
 				dy -= d_L;
 			} else if(dy < -l) {
 				dy += d_L;
@@ -122,14 +122,16 @@ __global__ void d_check_active(device_configuration_structure *d_conf) {
 		}
 	}
 }
+
 //------------------------------------------------------------------------------
 int main(void) {
+	int i;
 	host_configuration_structure h_conf;
 	device_configuration_structure d_conf;
+	int h_check_result[280] = {0};
 	//initialize
 	init_genrand(19970303);
 	//--set variable
-	int h_check_result[280];
 	h_conf.Np = 280;
 	h_conf.L = 25.0;
 	h_conf.phi = PI * 0.25 * h_conf.Np / (h_conf.L * h_conf.L);
@@ -148,10 +150,12 @@ int main(void) {
 	cudaMemcpy(d_conf.y, h_conf.y, h_conf.Np * sizeof(double), cudaMemcpyHostToDevice);
 	//--make first acriveness list
 	h_check_active(&h_conf);
+
 	d_check_active<<<NUM_BLOCK, NUM_THREAD>>>(&d_conf);
 	cudaDeviceSynchronize();
 	cudaMemcpy(h_check_result, d_conf.active, h_conf.Np * sizeof(int), cudaMemcpyDeviceToHost);
-	DBG(h_conf.active, h_check_result, h_conf.Np);
+
+	h_DBG(h_conf.active, h_check_result, h_conf.Np);
 
 	//move particles
 
