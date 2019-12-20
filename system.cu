@@ -71,36 +71,59 @@ void h_check_active_with_list(double *h_x, double *h_y, double h_L, int h_Np, in
 		h_active[i] = 0;
 	}
 	for(i = 0; i < h_Np; i += 1) {
-		x_cell = (int)(h_x[i] / cell_per_axis);
-		y_cell = (int)(h_y[i] / cell_per_axis);
+		x_cell = (int)(h_x[i] * (double)cell_per_axis / h_L);
+		y_cell = (int)(h_y[i] * (double)cell_per_axis / h_L);
+
+		x_cell = (x_cell + cell_per_axis) % cell_per_axis;
+		y_cell = (y_cell + cell_per_axis) % cell_per_axis;
+
 		cell_id = x_cell + y_cell * cell_per_axis;
 		contained_num = h_cell_list[cell_id * N_per_cell];
 
-		if(h_active[i] == 0) {
-			for(j = 0; j < contained_num; j += 1) {
-				pair_id = h_cell_list[cell_id * N_per_cell + j];
-				dx = h_x[i] - h_x[pair_id];
-				if(dx > 0.5 * h_L) {
-					dx -= h_L;
-				} else if(dx < -0.5 * h_L) {
-					dx += h_L;
-				}
-				dy = h_y[i] - h_y[pair_id];
-				if(dy > 0.5 * h_L) {
-					dy -= h_L;
-				} else if(dy < -0.5 * h_L) {
-					dy += h_L;
-				}
+		for(j = 1; j < contained_num; j += 1) {
+			pair_id = h_cell_list[cell_id * N_per_cell + j];
+			dx = h_x[i] - h_x[pair_id];
+			if(dx > 0.5 * h_L) {
+				dx -= h_L;
+			} else if(dx < -0.5 * h_L) {
+				dx += h_L;
+			}
+			dy = h_y[i] - h_y[pair_id];
+			if(dy > 0.5 * h_L) {
+				dy -= h_L;
+			} else if(dy < -0.5 * h_L) {
+				dy += h_L;
+			}
 
-				dr_square = dx * dx + dy * dy;
-				if(dr_square < diameter_square) {
-					h_active[i] = 1;
-					h_active[pair_id] = 1;
-				}
+			dr_square = dx * dx + dy * dy;
+			if(dr_square < diameter_square) {
+				h_active[i] = 1;
+				break;
 			}
 		}
-	}
 
+/*		for(j = 0; j < i; j += 1) {
+			dx = h_x[i] - h_x[j];
+			if(dx > 0.5 * h_L) {
+				dx -= h_L;
+			} else if(dx < -0.5 * h_L) {
+				dx += h_L;
+			}
+			dy = h_y[i] - h_y[j];
+			if(dy > 0.5 * h_L) {
+				dy -= h_L;
+			} else if(dy < -0.5 * h_L) {
+				dy += h_L;
+			}
+
+			dr_square = dx * dx + dy * dy;
+			if(dr_square < diameter_square) {
+				h_active[i] = 1;
+				h_active[j] = 1;
+			}
+		}
+*/
+	}
 }
 
 void h_DBG(int *A, int *B, int dim) {
@@ -113,19 +136,23 @@ void h_DBG(int *A, int *B, int dim) {
 }
 
 int h_make_cell_list(double *h_x, double *h_y, double h_L, int h_Np, int *h_cell_list, int cell_per_axis, int N_per_cell) {
+	//h_make_cell_list(h_x, h_y, h_L, h_Np, h_cell_list, cell_per_axis, N_per_cell);
 	int i, j, k;
 	int x_cell, y_cell;
 	int cell_id;
 	int cell_list_size = cell_per_axis * cell_per_axis * N_per_cell;
 	int contained_num;
+	FILE *file;
 	//init cell list
 	for(i = 0; i < cell_list_size; i += 1) {
 		h_cell_list[i] = 0;
 	}
+	file = fopen("cell_id.txt", "w");
 	//make cell list
 	for(i = 0; i < h_Np; i += 1) {
-		x_cell = (int)(h_x[i] / (double)cell_per_axis);
-		y_cell = (int)(h_y[i] / (double)cell_per_axis);
+		x_cell = (int)(h_x[i] * (double)cell_per_axis / h_L);
+		y_cell = (int)(h_y[i] * (double)cell_per_axis / h_L);
+		fprintf(file, "%d %d\n", i, ((x_cell + cell_per_axis) % cell_per_axis) + ((y_cell + cell_per_axis) % cell_per_axis) * cell_per_axis);
 		for(j = x_cell - 1; j <= x_cell + 1; j += 1) {
 			for(k = y_cell - 1; k <= y_cell + 1; k += 1) {
 				cell_id = ((j + cell_per_axis) % cell_per_axis) + ((k + cell_per_axis) % cell_per_axis) * cell_per_axis;
@@ -139,6 +166,7 @@ int h_make_cell_list(double *h_x, double *h_y, double h_L, int h_Np, int *h_cell
 			}
 		}
 	}
+	fclose(file);
 	return 0;
 }
 
@@ -208,13 +236,13 @@ int main(void) {
 	int *d_cell_list;
 
 	//initialize
-	init_genrand((int)time(NULL));
+	init_genrand(19970303);
 
 	//--set variable
 	h_Np = 18000;
 	h_L = 140.0;
 	cell_per_axis = (int)(h_L / 11.0) + 1;//renew list every 5 steps
-	N_per_cell = (h_Np * 15) / (cell_per_axis * cell_per_axis);
+	N_per_cell = (h_Np * 13) / (cell_per_axis * cell_per_axis);
 	printf("cell per axis:%d N_per_cell:%d\n", cell_per_axis, N_per_cell);
 
 	cudaMemcpyToSymbol(d_Np, &h_Np, sizeof(int), 0, cudaMemcpyHostToDevice);
@@ -252,12 +280,14 @@ int main(void) {
 	end = clock();
 	file = fopen("init_cood.txt", "w");
 	for(i = 0; i < h_Np; i += 1) {
-		fprintf(file, "%f %f\n", h_x[i], h_y[i]);
+		fprintf(file, "%d %f %f\n", i, h_x[i], h_y[i]);
 	}
 	fclose(file);
-	for(i = 0; i < cell_per_axis * cell_per_axis; i += 1) {
-		printf("%dth cell:%d\n", i, h_cell_list[i * N_per_cell]);
+	file = fopen("cell_list.txt", "w");
+	for(i = 0; i < N_per_cell * cell_per_axis * cell_per_axis; i += 1) {
+		fprintf(file, "%d %d\n", i, h_cell_list[i]);
 	}
+	fclose(file);
 	printf("cell list:%d [ms]\n", (int)((end - start)*1000 /CLOCKS_PER_SEC ));
 
 	//----made in device global
@@ -268,11 +298,11 @@ int main(void) {
 	end = clock();
 	printf("gpu:%d [ms]\n", (int)((end - start)*1000 /CLOCKS_PER_SEC ));
 	
-	//printf("\n");
-	//for(i = 0; i < h_Np; i += 1) {
-	//	printf("(%d,%d) ", h_active[i], h_check_result[i]);
-	//}
-	//printf("\n");
+	printf("\n");
+	for(i = 0; i < cell_per_axis * cell_per_axis; i += 1) {
+		printf("(%d,%d) ", i, h_cell_list[i * N_per_cell]);
+	}
+	printf("\n");
 	printf("gpu:");
 	h_DBG(h_active, h_check_result, h_Np);
 	printf("cell_list:");
