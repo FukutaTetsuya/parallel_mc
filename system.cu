@@ -267,6 +267,13 @@ int main(void) {
 	cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 
+	/*file = fopen("init_cood.txt", "w");
+	for(i = 0; i < h_Np; i += 1) {
+		fprintf(file, "%d %f %f\n", i, h_x[i], h_y[i]);
+	}
+	fclose(file);*/
+
+
 	//--make first acriveness array
 	//----made in host
 	start = clock();
@@ -279,17 +286,9 @@ int main(void) {
 	h_make_cell_list(h_x, h_y, h_L, h_Np, h_cell_list, cell_per_axis, N_per_cell);
 	h_check_active_with_list(h_x, h_y, h_L, h_Np, h_active_DBG, h_cell_list, cell_per_axis, N_per_cell);
 	end = clock();
-	file = fopen("init_cood.txt", "w");
-	for(i = 0; i < h_Np; i += 1) {
-		fprintf(file, "%d %f %f\n", i, h_x[i], h_y[i]);
-	}
-	fclose(file);
-	file = fopen("cell_list.txt", "w");
-	for(i = 0; i < N_per_cell * cell_per_axis * cell_per_axis; i += 1) {
-		fprintf(file, "%d %d\n", i, h_cell_list[i]);
-	}
-	fclose(file);
-	printf("cell list:%d [ms]\n", (int)((end - start)*1000 /CLOCKS_PER_SEC ));
+	printf("host cell list:%d [ms]\n", (int)((end - start)*1000 /CLOCKS_PER_SEC ));
+	h_DBG(h_active, h_active_DBG, h_Np);
+	printf("\n");
 
 	//----made in device global
 	start = clock();
@@ -298,16 +297,12 @@ int main(void) {
 	cudaMemcpy(h_check_result, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
 	end = clock();
 	printf("gpu:%d [ms]\n", (int)((end - start)*1000 /CLOCKS_PER_SEC ));
-	
-	printf("\n");
-	for(i = 0; i < cell_per_axis * cell_per_axis; i += 1) {
-		printf("(%d,%d) ", i, h_cell_list[i * N_per_cell]);
-	}
-	printf("\n");
-	printf("gpu:");
 	h_DBG(h_active, h_check_result, h_Np);
-	printf("cell_list:");
-	h_DBG(h_active, h_active_DBG, h_Np);
+	printf("\n");
+
+	//----made in device global with list
+	
+	printf("gpu:");
 
 	//move particles
 
