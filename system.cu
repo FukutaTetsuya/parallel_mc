@@ -82,6 +82,7 @@ void h_check_active_with_list(double *h_x, double *h_y, double h_L, int h_Np, in
 
 		for(j = 1; j < contained_num; j += 1) {
 			pair_id = h_cell_list[cell_id * N_per_cell + j];
+			if(i == pair_id) {continue;}
 			dx = h_x[i] - h_x[pair_id];
 			if(dx > 0.5 * h_L) {
 				dx -= h_L;
