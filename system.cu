@@ -58,52 +58,6 @@ void h_check_active(double *h_x, double *h_y, double h_L, int h_Np, int *h_activ
 	}
 }
 
-/*void h_check_active_with_list(double *h_x, double *h_y, double h_L, int h_Np, int *h_active, int *h_cell_list, int cell_per_axis, int N_per_cell) {
-	int i, j;
-	int x_cell, y_cell;
-	int contained_num;
-	int cell_id, pair_id;
-	double dx, dy;
-	double dr_square;
-	double diameter_square = 1.0;
-
-	for(i = 0; i < h_Np; i += 1) {
-		h_active[i] = 0;
-	}
-	for(i = 0; i < h_Np; i += 1) {
-		x_cell = (int)(h_x[i] * (double)cell_per_axis / h_L);
-		y_cell = (int)(h_y[i] * (double)cell_per_axis / h_L);
-
-		x_cell = (x_cell + cell_per_axis) % cell_per_axis;
-		y_cell = (y_cell + cell_per_axis) % cell_per_axis;
-
-		cell_id = x_cell + y_cell * cell_per_axis;
-		contained_num = h_cell_list[cell_id * N_per_cell];
-
-		for(j = 1; j < contained_num; j += 1) {
-			pair_id = h_cell_list[cell_id * N_per_cell + j];
-			if(i == pair_id) {continue;}
-			dx = h_x[i] - h_x[pair_id];
-			if(dx > 0.5 * h_L) {
-				dx -= h_L;
-			} else if(dx < -0.5 * h_L) {
-				dx += h_L;
-			}
-			dy = h_y[i] - h_y[pair_id];
-			if(dy > 0.5 * h_L) {
-				dy -= h_L;
-			} else if(dy < -0.5 * h_L) {
-				dy += h_L;
-			}
-
-			dr_square = dx * dx + dy * dy;
-			if(dr_square < diameter_square) {
-				h_active[i] = 1;
-				break;
-			}
-		}
-	}
-}*/
 void h_check_active_with_list(double *h_x, double *h_y, double h_L, int h_Np, int *h_active, int *h_cell_list, int cell_per_axis, int N_per_cell) {
 	int i, j, k;
 	int x_c, y_c;
@@ -223,7 +177,28 @@ __global__ void d_check_active(double *d_x, double *d_y, int *d_active) {
 
 	}
 }
+
+__global__ void d_check_active_with_list(double *d_x, double *d_y, int *d_active, int *d_cell_list, int cell_per_axis, int N_per_cell) {
+	//d_L and d_Np are already declared as __global__ const
+	int i, j, k;
+	int x_c, y_c;
+	int cell_id, N_in_cell;
+	int pair_id;
+	int i_global;
+	double dx, dy, dr_square;
+	double diameter_square = 1.0;
+	i_global = blockDim.x * blockIdx.x + threadIdx.x;
+	for(i = i_global; i < d_Np; i += NUM_BLOCK * NUM_THREAD) {
+		d_active[i] = 0;
+		x_c = (int)(d_x[i] * (double)cell_per_axis / d_L);
+		y_c = (int)(d_y[i] * (double)cell_per_axis / d_L);
+		cell_id = x_c + y_c * cell_per_axis;
+		N_in_cell = d_cell_list[cell_id * N_per_cell];	
+	}
+}
+
 __global__ void make_cell_list(double *d_x, double *d_y, double d_L, int d_Np, int *d_cell_list) {
+	//d_L and d_Np are already declared as __global__ const
 }
 
 //------------------------------------------------------------------------------
@@ -251,8 +226,8 @@ int main(void) {
 	int *d_cell_list;
 
 	//initialize
-	//init_genrand(19970303);
-	init_genrand((int)time(NULL));
+	init_genrand(19970303);
+	//init_genrand((int)time(NULL));
 
 	//--set variable
 	h_Np = 18000;
@@ -265,6 +240,7 @@ int main(void) {
 	cudaMemcpyToSymbol(d_L, &h_L, sizeof(double), 0, cudaMemcpyHostToDevice);
 
 	//--allocate memory
+	//----memory on host
 	cudaHostAlloc((void **)&h_x, h_Np * sizeof(double), cudaHostAllocMapped);
 	cudaHostAlloc((void **)&h_y, h_Np * sizeof(double), cudaHostAllocMapped);
 	cudaHostAlloc((void **)&h_active, h_Np * sizeof(int), cudaHostAllocMapped);
@@ -272,6 +248,7 @@ int main(void) {
 	cudaHostAlloc((void **)&h_cell_list, cell_per_axis * cell_per_axis * N_per_cell * sizeof(int), cudaHostAllocMapped);
 	h_active_DBG = (int *)calloc(h_Np, sizeof(int));
 
+	//----memory on device
 	cudaMalloc((void **)&d_x, h_Np * sizeof(double));
 	cudaMalloc((void **)&d_y, h_Np * sizeof(double));
 	cudaMalloc((void **)&d_active, h_Np * sizeof(int));
@@ -281,13 +258,6 @@ int main(void) {
 	init_configuration(h_x, h_y, h_L, h_Np);
 	cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
-
-	/*file = fopen("init_cood.txt", "w");
-	for(i = 0; i < h_Np; i += 1) {
-		fprintf(file, "%d %f %f\n", i, h_x[i], h_y[i]);
-	}
-	fclose(file);*/
-
 
 	//--make first acriveness array
 	//----made in host
@@ -307,6 +277,8 @@ int main(void) {
 
 	//----made in device global
 	start = clock();
+	cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 	d_check_active<<<NUM_BLOCK, NUM_THREAD>>>(d_x, d_y, d_active);
 	cudaDeviceSynchronize();
 	cudaMemcpy(h_check_result, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
@@ -316,8 +288,16 @@ int main(void) {
 	printf("\n");
 
 	//----made in device global with list
-	
-	printf("gpu:");
+	start = clock();
+	h_make_cell_list(h_x, h_y, h_L, h_Np, h_cell_list, cell_per_axis, N_per_cell);
+	cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_cell_list, h_cell_list, N_per_cell * cell_per_axis * cell_per_axis * sizeof(int), cudaMemcpyHostToDevice);
+	d_check_active_with_list<<<NUM_BLOCK, NUM_THREAD>>>(d_x, d_y, d_active, d_cell_list, cell_per_axis, N_per_cell);
+	cudaDeviceSynchronize();
+
+	end = clock();
+	printf("gpu with list:%d [ms]\n", (int)((end - start)*1000 /CLOCKS_PER_SEC ));
 
 	//move particles
 
