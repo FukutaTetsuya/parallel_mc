@@ -58,7 +58,7 @@ void h_check_active(double *h_x, double *h_y, double h_L, int h_Np, int *h_activ
 	}
 }
 
-void h_check_active_with_list(double *h_x, double *h_y, double h_L, int h_Np, int *h_active, int *h_cell_list, int cell_per_axis, int N_per_cell) {
+/*void h_check_active_with_list(double *h_x, double *h_y, double h_L, int h_Np, int *h_active, int *h_cell_list, int cell_per_axis, int N_per_cell) {
 	int i, j;
 	int x_cell, y_cell;
 	int contained_num;
@@ -102,30 +102,44 @@ void h_check_active_with_list(double *h_x, double *h_y, double h_L, int h_Np, in
 				break;
 			}
 		}
+	}
+}*/
+void h_check_active_with_list(double *h_x, double *h_y, double h_L, int h_Np, int *h_active, int *h_cell_list, int cell_per_axis, int N_per_cell) {
+	int i, j, k;
+	int x_c, y_c;
+	int cell_id, N_in_cell;
+	int pair_id;
+	double dx, dy, dr_square;
+	double diameter_square = 1.0;
 
-/*		for(j = 0; j < i; j += 1) {
-			dx = h_x[i] - h_x[j];
-			if(dx > 0.5 * h_L) {
-				dx -= h_L;
-			} else if(dx < -0.5 * h_L) {
+	for(i = 0; i < h_Np; i += 1) {
+		x_c = (int)(h_x[i] * (double)cell_per_axis / h_L);
+		y_c = (int)(h_y[i] * (double)cell_per_axis / h_L);
+		cell_id = x_c + y_c * cell_per_axis;
+		N_in_cell = h_cell_list[cell_id * N_per_cell];
+		for(j = 1; j <= N_in_cell; j += 1) {
+			pair_id = h_cell_list[cell_id * N_per_cell + j];
+			if(i == pair_id) {continue;}
+			dx = h_x[i] - h_x[pair_id];
+			if(dx < -0.5 * h_L) {
 				dx += h_L;
+			} else if(dx > 0.5 * h_L) {
+				dx -= h_L;
 			}
-			dy = h_y[i] - h_y[j];
-			if(dy > 0.5 * h_L) {
-				dy -= h_L;
-			} else if(dy < -0.5 * h_L) {
+			dy = h_y[i] - h_y[pair_id];
+			if(dy < -0.5 * h_L) {
 				dy += h_L;
+			} else if(dy > 0.5 * h_L) {
+				dy -= h_L;
 			}
-
 			dr_square = dx * dx + dy * dy;
-			if(dr_square < diameter_square) {
+			if(diameter_square > dr_square) {
 				h_active[i] = 1;
-				h_active[j] = 1;
 			}
 		}
-*/
 	}
 }
+
 
 void h_DBG(int *A, int *B, int dim) {
 	int i;
@@ -237,7 +251,8 @@ int main(void) {
 	int *d_cell_list;
 
 	//initialize
-	init_genrand(19970303);
+	//init_genrand(19970303);
+	init_genrand((int)time(NULL));
 
 	//--set variable
 	h_Np = 18000;
