@@ -230,6 +230,45 @@ __global__ void d_check_active_with_list(double *d_x, double *d_y, int *d_active
 		}
 	}
 }
+__global__ void d_check_active_with_list_manythread(double *d_x, double *d_y, int *d_active, int *d_cell_list, int cell_per_axis, int N_per_cell) {
+	//d_L and d_Np are already declared as __global__ const
+	int i, j;
+	int x_c, y_c;
+	int cell_id, N_in_cell;
+	int pair_id;
+	int i_global;
+	double dx, dy, dr_square;
+	double diameter_square = 1.0;
+	i_global = blockDim.x * blockIdx.x + threadIdx.x;
+	if(i_global < d_Np) {
+		d_active[i_global] = 0;
+		x_c = (int)(d_x[i_global] * (double)cell_per_axis / d_L);
+		y_c = (int)(d_y[i_global] * (double)cell_per_axis / d_L);
+		cell_id = x_c + y_c * cell_per_axis;
+		N_in_cell = d_cell_list[cell_id * N_per_cell];	
+		for(j = 1; j <= N_in_cell; j += 1) {
+			pair_id = d_cell_list[cell_id * N_per_cell + j];
+			if(i_global == pair_id) {continue;}
+			dx = d_x[i_global] - d_x[pair_id];
+			dy = d_y[i_global] - d_y[pair_id];
+			if(dx < -0.5 * d_L) {
+				dx += d_L;
+			} else if(dx > 0.5 * d_L) {
+				dx -= d_L;
+			}
+			if(dy < -0.5 * d_L) {
+				dy += d_L;
+			} else if(dy > 0.5 * d_L) {
+				dy -= d_L;
+			}
+			dr_square = dx * dx + dy * dy;
+			if(diameter_square > dr_square) {
+				d_active[i_global] = 1;
+			}
+		}
+	}
+}
+
 
 __global__ void d_check_belonging_cell(double *d_x, double *d_y, int *d_cell_list, int *d_belonging_cell, int cell_per_axis, int N_per_cell) {
 	//d_L and d_Np are already declared as __global__ const
@@ -412,7 +451,8 @@ int main(void) {
 	cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_cell_list, h_cell_list, N_per_cell * cell_per_axis * cell_per_axis * sizeof(int), cudaMemcpyHostToDevice);
-	d_check_active_with_list<<<NUM_BLOCK, NUM_THREAD>>>(d_x, d_y, d_active, d_cell_list, cell_per_axis, N_per_cell);
+	//d_check_active_with_list<<<NUM_BLOCK, NUM_THREAD>>>(d_x, d_y, d_active, d_cell_list, cell_per_axis, N_per_cell);
+	d_check_active_with_list_manythread<<<1, h_Np>>>(d_x, d_y, d_active, d_cell_list, cell_per_axis, N_per_cell);
 	cudaDeviceSynchronize();
 	cudaMemcpy(h_check_result, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
 	end = clock();
@@ -427,7 +467,8 @@ int main(void) {
 	//h_make_cell_list_on_device(d_x, d_y, d_cell_list, d_belonging_cell, cell_per_axis, N_per_cell);
 	d_make_cell_list<<<1, h_Np>>>(d_x, d_y, d_cell_list, d_belonging_cell, cell_per_axis, N_per_cell);
 	cudaDeviceSynchronize();
-	d_check_active_with_list<<<NUM_BLOCK, NUM_THREAD>>>(d_x, d_y, d_active, d_cell_list, cell_per_axis, N_per_cell);
+	//d_check_active_with_list<<<NUM_BLOCK, NUM_THREAD>>>(d_x, d_y, d_active, d_cell_list, cell_per_axis, N_per_cell);
+	d_check_active_with_list_manythread<<<1, h_Np>>>(d_x, d_y, d_active, d_cell_list, cell_per_axis, N_per_cell);
 	cudaDeviceSynchronize();
 	cudaMemcpy(h_check_result, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
 	end = clock();
