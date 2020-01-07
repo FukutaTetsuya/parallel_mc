@@ -249,14 +249,48 @@ __global__ void d_check_belonging_cell(double *d_x, double *d_y, int *d_cell_lis
 
 __global__ void d_make_cell_list_from_belonging_cell(double *d_x, double *d_y, int *d_cell_list, int *d_belonging_cell, int cell_per_axis, int N_per_cell) {
 	//d_L and d_Np are already declared as __global__ const
-	int i, j, k ,l;
+	//modulos or if()elseif(), which is the faster?
+	int i, j, k, l;
 	int i_global;
 	int cell_id;
-	int x_neighbour, y_neighbour;
+	int x_cell, y_cell;
+	int x_next, y_next;
 
 	i_global = blockDim.x * blockIdx.x + threadIdx.x;
 	for(i = i_global; i < cell_per_axis * cell_per_axis; i += NUM_BLOCK * NUM_THREAD) {
+		d_cell_list[i * N_per_cell] = 0;
+		x_cell = i % cell_per_axis;
+		y_cell = i / cell_per_axis;
+		for(j = x_cell - 1; j <= x_cell + 1; j += 1) {
+/*			if(j < 0) {
+				x_next = j + cell_per_axis;
+			} else if(j >= cell_per_axis) {
+					x_next = j - cell_per_axis;
+			} else {
+					x_next = j;
+			}
+ */
+			for(k = y_cell - 1; k <= y_cell + 1; k += 1) {
+/*				if(k < 0) {
+					y_next = k + cell_per_axis;
+				} else if(k >= cell_per_axis) {
+					y_next = k - cell_per_axis;
+				} else {
+					y_next = k;
+				}
+ */
+				cell_id = ((j + cell_per_axis) % cell_per_axis) + ((k + cell_per_axis) % cell_per_axis) * cell_per_axis;
+				//cell_id = x_next + y_next * cell_per_axis;
+				for(l = 0; l < d_Np; l += 1) {
+					if(d_belonging_cell[l] == cell_id) {
+						d_cell_list[i * N_per_cell] += 1;
+						d_cell_list[i * N_per_cell +  d_cell_list[i * N_per_cell] ] = l;
+					}
+				}
+			}
+		}
 	}
+
 }
 
 void h_make_cell_list_on_device(double *d_x, double *d_y, int *d_cell_list, int *d_belonging_cell, int cell_per_axis, int N_per_cell) {
@@ -267,6 +301,7 @@ void h_make_cell_list_on_device(double *d_x, double *d_y, int *d_cell_list, int 
 	//synchronize
 	cudaDeviceSynchronize();
 	//gather the belonging cell and make cell list
+	d_make_cell_list_from_belonging_cell<<<NUM_BLOCK, NUM_THREAD>>>(d_x, d_y, d_cell_list, d_belonging_cell, cell_per_axis, N_per_cell);
 	//synchronize
 	cudaDeviceSynchronize();
 }
@@ -297,8 +332,8 @@ int main(void) {
 	int *d_belonging_cell;
 
 	//initialize
-	init_genrand(19970303);
-	//init_genrand((int)time(NULL));
+	//init_genrand(19970303);
+	init_genrand((int)time(NULL));
 
 	//--set variable
 	h_Np = 18000;
@@ -379,11 +414,18 @@ int main(void) {
 	cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 	h_make_cell_list_on_device(d_x, d_y, d_cell_list, d_belonging_cell, cell_per_axis, N_per_cell);
 	cudaDeviceSynchronize();
+	d_check_active_with_list<<<NUM_BLOCK, NUM_THREAD>>>(d_x, d_y, d_active, d_cell_list, cell_per_axis, N_per_cell);
+	cudaDeviceSynchronize();
+	cudaMemcpy(h_check_result, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
 	end = clock();
 	printf("gpu with gpu list:%d [ms]\n", (int)((end - start)*1000 /CLOCKS_PER_SEC ));
+	h_DBG(h_active, h_check_result, h_Np);
 	printf("\n");
 
-	//move particles
+	//time loop
+	//--move particles
+	//--check activeness
+	//--(sometimes) make new cell list
 
 	//finalize
 	//--free memory
