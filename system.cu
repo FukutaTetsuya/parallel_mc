@@ -59,7 +59,7 @@ void h_check_active(double *h_x, double *h_y, double h_L, int h_Np, int *h_activ
 }
 
 void h_check_active_with_list(double *h_x, double *h_y, double h_L, int h_Np, int *h_active, int *h_cell_list, int cell_per_axis, int N_per_cell) {
-	int i, j, k;
+	int i, j;
 	int x_c, y_c;
 	int cell_id, N_in_cell;
 	int pair_id;
@@ -180,7 +180,7 @@ __global__ void d_check_active(double *d_x, double *d_y, int *d_active) {
 
 __global__ void d_check_active_with_list(double *d_x, double *d_y, int *d_active, int *d_cell_list, int cell_per_axis, int N_per_cell) {
 	//d_L and d_Np are already declared as __global__ const
-	int i, j, k;
+	int i, j;
 	int x_c, y_c;
 	int cell_id, N_in_cell;
 	int pair_id;
@@ -194,6 +194,26 @@ __global__ void d_check_active_with_list(double *d_x, double *d_y, int *d_active
 		y_c = (int)(d_y[i] * (double)cell_per_axis / d_L);
 		cell_id = x_c + y_c * cell_per_axis;
 		N_in_cell = d_cell_list[cell_id * N_per_cell];	
+		for(j = 1; j <= N_in_cell; j += 1) {
+			pair_id = d_cell_list[cell_id * N_per_cell + j];
+			if(i == pair_id) {continue;}
+			dx = d_x[i] - d_x[pair_id];
+			dy = d_y[i] - d_y[pair_id];
+			if(dx < -0.5 * d_L) {
+				dx += d_L;
+			} else if(dx > 0.5 * d_L) {
+				dx -= d_L;
+			}
+			if(dy < -0.5 * d_L) {
+				dy += d_L;
+			} else if(dy > 0.5 * d_L) {
+				dy -= d_L;
+			}
+			dr_square = dx * dx + dy * dy;
+			if(diameter_square > dr_square) {
+				d_active[i] = 1;
+			}
+		}
 	}
 }
 
@@ -264,7 +284,7 @@ int main(void) {
 	start = clock();
 	h_check_active(h_x, h_y, h_L, h_Np, h_active);
 	end = clock();
-	printf("straighforward:%d [ms]\n", (int)((end - start)*1000 /CLOCKS_PER_SEC ));
+	printf("straighforward:%d [ms]\n\n", (int)((end - start)*1000 /CLOCKS_PER_SEC ));
 
 	//----made in host with cell list
 	start = clock();
@@ -287,7 +307,7 @@ int main(void) {
 	h_DBG(h_active, h_check_result, h_Np);
 	printf("\n");
 
-	//----made in device global with list
+	//----made in device global with list, list is made in host
 	start = clock();
 	h_make_cell_list(h_x, h_y, h_L, h_Np, h_cell_list, cell_per_axis, N_per_cell);
 	cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
@@ -295,9 +315,13 @@ int main(void) {
 	cudaMemcpy(d_cell_list, h_cell_list, N_per_cell * cell_per_axis * cell_per_axis * sizeof(int), cudaMemcpyHostToDevice);
 	d_check_active_with_list<<<NUM_BLOCK, NUM_THREAD>>>(d_x, d_y, d_active, d_cell_list, cell_per_axis, N_per_cell);
 	cudaDeviceSynchronize();
-
+	cudaMemcpy(h_check_result, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
 	end = clock();
-	printf("gpu with list:%d [ms]\n", (int)((end - start)*1000 /CLOCKS_PER_SEC ));
+	printf("gpu with host list:%d [ms]\n", (int)((end - start)*1000 /CLOCKS_PER_SEC ));
+	h_DBG(h_active, h_check_result, h_Np);
+	printf("\n");
+
+	//----made in device global with list, list is made in device
 
 	//move particles
 
