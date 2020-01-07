@@ -254,7 +254,6 @@ __global__ void d_make_cell_list_from_belonging_cell(double *d_x, double *d_y, i
 	int i_global;
 	int cell_id;
 	int x_cell, y_cell;
-	int x_next, y_next;
 
 	i_global = blockDim.x * blockIdx.x + threadIdx.x;
 	for(i = i_global; i < cell_per_axis * cell_per_axis; i += NUM_BLOCK * NUM_THREAD) {
@@ -262,25 +261,8 @@ __global__ void d_make_cell_list_from_belonging_cell(double *d_x, double *d_y, i
 		x_cell = i % cell_per_axis;
 		y_cell = i / cell_per_axis;
 		for(j = x_cell - 1; j <= x_cell + 1; j += 1) {
-/*			if(j < 0) {
-				x_next = j + cell_per_axis;
-			} else if(j >= cell_per_axis) {
-					x_next = j - cell_per_axis;
-			} else {
-					x_next = j;
-			}
- */
 			for(k = y_cell - 1; k <= y_cell + 1; k += 1) {
-/*				if(k < 0) {
-					y_next = k + cell_per_axis;
-				} else if(k >= cell_per_axis) {
-					y_next = k - cell_per_axis;
-				} else {
-					y_next = k;
-				}
- */
 				cell_id = ((j + cell_per_axis) % cell_per_axis) + ((k + cell_per_axis) % cell_per_axis) * cell_per_axis;
-				//cell_id = x_next + y_next * cell_per_axis;
 				for(l = 0; l < d_Np; l += 1) {
 					if(d_belonging_cell[l] == cell_id) {
 						d_cell_list[i * N_per_cell] += 1;
@@ -290,7 +272,39 @@ __global__ void d_make_cell_list_from_belonging_cell(double *d_x, double *d_y, i
 			}
 		}
 	}
+}
 
+__global__ void d_make_cell_list(double *d_x, double *d_y, int *d_cell_list, int *d_belonging_cell, int cell_per_axis, int N_per_cell) {
+	//this func needs equal to or more than Np threads
+	int i, j, k, l;
+	int i_global;
+	int x_cell, y_cell;
+	int cell_id;
+
+	i_global = blockDim.x * blockIdx.x + threadIdx.x;
+	if(i_global < d_Np) {
+		x_cell = (int)(d_x[i_global] * (double)cell_per_axis / d_L);
+		y_cell = (int)(d_y[i_global] * (double)cell_per_axis / d_L);
+		cell_id = x_cell + y_cell * cell_per_axis;
+		d_belonging_cell[i_global] = cell_id;
+	}
+	__syncthreads();
+	if(i_global < cell_per_axis * cell_per_axis) {
+		d_cell_list[i_global * N_per_cell] = 0;
+		x_cell = i_global % cell_per_axis;
+		y_cell = i_global / cell_per_axis;
+		for(j = x_cell - 1; j <= x_cell + 1; j += 1) {
+			for(k = y_cell - 1; k <= y_cell + 1; k += 1) {
+				cell_id = ((j + cell_per_axis) % cell_per_axis) + ((k + cell_per_axis) % cell_per_axis) * cell_per_axis;
+				for(l = 0; l < d_Np; l += 1) {
+					if(d_belonging_cell[l] == cell_id) {
+						d_cell_list[i_global * N_per_cell] += 1;
+						d_cell_list[i_global * N_per_cell +  d_cell_list[i_global * N_per_cell] ] = l;
+					}
+				}
+			}
+		}
+	}
 }
 
 void h_make_cell_list_on_device(double *d_x, double *d_y, int *d_cell_list, int *d_belonging_cell, int cell_per_axis, int N_per_cell) {
@@ -308,11 +322,9 @@ void h_make_cell_list_on_device(double *d_x, double *d_y, int *d_cell_list, int 
 
 //------------------------------------------------------------------------------
 int main(void) {
-	int i;
 	clock_t start, end;
 	int cell_per_axis;
 	int N_per_cell;
-	FILE *file;
 
 	//variables in host
 	double *h_x;
@@ -412,7 +424,8 @@ int main(void) {
 	start = clock();
 	cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
-	h_make_cell_list_on_device(d_x, d_y, d_cell_list, d_belonging_cell, cell_per_axis, N_per_cell);
+	//h_make_cell_list_on_device(d_x, d_y, d_cell_list, d_belonging_cell, cell_per_axis, N_per_cell);
+	d_make_cell_list<<<1, h_Np>>>(d_x, d_y, d_cell_list, d_belonging_cell, cell_per_axis, N_per_cell);
 	cudaDeviceSynchronize();
 	d_check_active_with_list<<<NUM_BLOCK, NUM_THREAD>>>(d_x, d_y, d_active, d_cell_list, cell_per_axis, N_per_cell);
 	cudaDeviceSynchronize();
