@@ -12,9 +12,12 @@
 
 __device__ __constant__ int d_Np;
 __device__ __constant__ double d_L;
-#define NUM_BLOCK 32
-#define NUM_THREAD 32
+#define NUM_BLOCK 5
+#define NUM_THREAD 1024
 #define PI 3.1415926535897932384626433
+
+//pre declaration---------------------------------------------------------------
+__global__ void reduce_array_shared_memory(int *array, int *array_reduced, int dim_array);
 
 //host functions----------------------------------------------------------------
 void init_configuration(double *h_x, double *h_y, double h_L, int h_Np) {
@@ -92,6 +95,40 @@ void h_check_active_with_list(double *h_x, double *h_y, double h_L, int h_Np, in
 			}
 		}
 	}
+}
+
+int h_count_active_particle(int *h_active, int h_Np) {
+	int i;
+	int sum;
+	sum = 0;
+	for(i = 0; i < h_Np; i += 1) {
+		sum += h_active[i];
+	}
+	return sum;
+}
+
+int count_active_on_device(int *d_active, int h_Np) {
+	int i, j, k;
+	int i_temp;
+	int *d_reduction[2];
+	int h_answer;
+	cudaMalloc((void **)&d_reduction[0], h_Np * sizeof(int));
+	cudaMalloc((void **)&d_reduction[1], h_Np * sizeof(int));
+	i = 0;
+	j = 1;
+	cudaMemcpy(d_reduction[i], d_active, h_Np * sizeof(int), cudaMemcpyDeviceToDevice);
+	for(k = h_Np; k > 1; k = 1 + k / NUM_THREAD) {
+		reduce_array_shared_memory<<<NUM_BLOCK, NUM_THREAD>>>(d_reduction[i], d_reduction[j], k);
+		cudaDeviceSynchronize();
+		i_temp = i;
+		i = j;
+		j = i_temp;
+	}
+	cudaMemcpy(&h_answer, d_reduction[i], sizeof(int), cudaMemcpyDeviceToHost);
+
+	cudaFree(d_reduction[0]);
+	cudaFree(d_reduction[1]);
+	return h_answer;
 }
 
 
@@ -176,7 +213,7 @@ __global__ void d_check_active(double *d_x, double *d_y, int *d_active) {
 
 __global__ void d_check_active_with_list(double *d_x, double *d_y, int *d_active, int *d_cell_list, int cell_per_axis, int N_per_cell) {
 	//d_L and d_Np are already declared as __global__ const
-	int i, j;
+	int j;
 	int x_c, y_c;
 	int cell_id, N_in_cell;
 	int pair_id;
@@ -215,7 +252,7 @@ __global__ void d_check_active_with_list(double *d_x, double *d_y, int *d_active
 
 __global__ void d_make_cell_list(double *d_x, double *d_y, int *d_cell_list, int *d_belonging_cell, int cell_per_axis, int N_per_cell) {
 	//this func needs equal to or more than Np threads
-	int i, j, k, l;
+	int j, k, l;
 	int i_global;
 	int x_cell, y_cell;
 	int cell_id;
@@ -246,6 +283,39 @@ __global__ void d_make_cell_list(double *d_x, double *d_y, int *d_cell_list, int
 	}
 }
 
+__global__ void reduce_array_shared_memory(int *array, int *array_reduced, int dim_array) {
+	__shared__ int array_shared[NUM_THREAD];
+	int global_id = threadIdx.x + blockIdx.x * blockDim.x;
+	int block_id = blockIdx.x;
+	int local_id = threadIdx.x;
+	int i, j;
+	int iterate_max = 1 + dim_array / (NUM_THREAD * NUM_BLOCK);
+	int iterate;
+
+	for(iterate = 0; iterate < iterate_max; iterate += 1) {
+		i = global_id + iterate * NUM_BLOCK * NUM_THREAD;
+		if(i < d_Np) {
+			array_shared[local_id] = array[i];
+		} else {
+			array_shared[local_id] = 0;
+		}
+		__syncthreads();
+
+		for(j = NUM_THREAD / 2; j > 0; j /= 2) {
+			if((local_id < j) && (local_id + j < dim_array)) {
+				array_shared[local_id] += array_shared[local_id + j]; 
+			}
+		__syncthreads();
+		}
+
+		if(local_id == 0) {
+			array_reduced[block_id] = array_shared[0];
+		}
+		__syncthreads();
+		block_id += NUM_BLOCK;
+	}
+}
+
 //------------------------------------------------------------------------------
 int main(void) {
 	clock_t start, end;
@@ -259,6 +329,7 @@ int main(void) {
 	int *h_active;
 	int *h_check_result;
 	int h_Np;
+	int h_N_active;
 	int *h_cell_list;
 	int *h_active_DBG;
 
@@ -268,6 +339,7 @@ int main(void) {
 	int *d_active;
 	int *d_cell_list;
 	int *d_belonging_cell;
+	int d_N_active;
 
 	//initialize
 	//init_genrand(19970303);
@@ -350,6 +422,11 @@ int main(void) {
 	//time loop
 	//--move particles
 	//--check activeness
+	//--count active particles
+	h_N_active = h_count_active_particle(h_active, h_Np);
+	d_N_active = count_active_on_device(d_active, h_Np);
+	printf("res_Nactive:%d\n", h_N_active - d_N_active);
+	printf("active frac:%f\n", (double)d_N_active / (double)h_Np);
 	//--(sometimes) make new cell list
 
 	//finalize
