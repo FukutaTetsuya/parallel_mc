@@ -77,18 +77,17 @@ int count_active_on_device(int *d_active, int h_Np, int num_block) {
 		j = i_temp;
 	}
 	cudaMemcpy(&h_answer, d_reduction[i], sizeof(int), cudaMemcpyDeviceToHost);
-	printf("gpu:%d, ", h_answer);
 
 	cudaFree(d_reduction[0]);
 	cudaFree(d_reduction[1]);
-	return 0;
+	return h_answer;
 }
 
 int main(void){
 	int *h_active;
 	int *d_active;
 	int h_Np = 70000000;
-	int h_ans;
+	int h_ans, d_ans;
 	int num_block = 5;
 	clock_t start, end;
 	cudaMalloc((void **)&d_active, h_Np * sizeof(int));
@@ -105,9 +104,9 @@ int main(void){
 
 	start = clock();
 	cudaMemcpy(d_active, h_active, h_Np * sizeof(int), cudaMemcpyHostToDevice);
-	count_active_on_device(d_active, h_Np, num_block);
+	d_ans = count_active_on_device(d_active, h_Np, num_block);
 	end = clock();
-	printf("time:%d\n", (int)(end - start));
+	printf("gpu:%d, time:%d\n", d_ans, (int)(end - start));
 
 	cudaFree(d_active);
 	cudaFreeHost(h_active);
