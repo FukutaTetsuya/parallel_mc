@@ -11,19 +11,23 @@ __global__ void reduce_array_shared_memory(int *array, int *array_reduced, int d
 	int block_id = blockIdx.x;
 	int local_id = threadIdx.x;
 	int i, j;
-	for(i = global_id; i < dim_array; i += num_block * NUM_THREAD) {
-		array_shared[local_id] = array[i];
+	int iterate_max = 1 + dim_array / (NUM_THREAD * num_block);
+	int iterate;
+
+	for(iterate = 0; iterate < iterate_max; iterate += 1) {
+		i = global_id + iterate * num_block * NUM_THREAD;
+		if(i < d_Np) {
+			array_shared[local_id] = array[i];
+		} else {
+			array_shared[local_id] = 0;
+		}
 		__syncthreads();
 
-		//このj多分間違い
-		j = NUM_THREAD;
-		while(j > 1) {
-			if(j % 2 == 0) {
-				j = j / 2;
-			} else {
-				j = 1 + j / 2;
+		for(j = NUM_THREAD / 2; j > 0; j /= 2) {
+			if((local_id < j) && (local_id + j < dim_array)) {
+				array_shared[local_id] += array_shared[local_id + j]; 
 			}
-			__syncthreads();
+		__syncthreads();
 		}
 
 		if(local_id == 0) {
@@ -62,10 +66,10 @@ int count_active_on_device(int *d_active, int h_Np, int num_block) {
 	int h_answer;
 	cudaMalloc((void **)&d_reduction[0], h_Np * sizeof(int));
 	cudaMalloc((void **)&d_reduction[1], h_Np * sizeof(int));
-	cudaMemcpy(d_reduction[0], d_active, h_Np * sizeof(int), cudaMemcpyDeviceToDevice);
 	i = 0;
 	j = 1;
-	for(k = h_Np; k > 1; k = k / NUM_THREAD) {
+	cudaMemcpy(d_reduction[i], d_active, h_Np * sizeof(int), cudaMemcpyDeviceToDevice);
+	for(k = h_Np; k > 1; k = 1 + k / NUM_THREAD) {
 		reduce_array_shared_memory<<<num_block, NUM_THREAD>>>(d_reduction[i], d_reduction[j], k, num_block);
 		cudaDeviceSynchronize();
 		i_temp = i;
@@ -73,7 +77,7 @@ int count_active_on_device(int *d_active, int h_Np, int num_block) {
 		j = i_temp;
 	}
 	cudaMemcpy(&h_answer, d_reduction[i], sizeof(int), cudaMemcpyDeviceToHost);
-	printf("gpu:%d\n", h_answer);
+	printf("gpu:%d, ", h_answer);
 
 	cudaFree(d_reduction[0]);
 	cudaFree(d_reduction[1]);
@@ -83,21 +87,27 @@ int count_active_on_device(int *d_active, int h_Np, int num_block) {
 int main(void){
 	int *h_active;
 	int *d_active;
-	int h_Np = 2000;
-	int h_ans, d_ans;
-	int num_block = h_Np / NUM_THREAD + 1;
-
+	int h_Np = 70000000;
+	int h_ans;
+	int num_block = 5;
+	clock_t start, end;
 	cudaMalloc((void **)&d_active, h_Np * sizeof(int));
 	cudaHostAlloc((void **)&h_active, h_Np * sizeof(int), cudaHostAllocMapped);
 	cudaMemcpyToSymbol(d_Np, &h_Np, sizeof(int), 0, cudaMemcpyHostToDevice);
 	init_genrand((int)time(NULL));
+	//init_genrand(19970303);
 
 	fill_array(h_active, h_Np);
-	cudaMemcpy(d_active, h_active, h_Np * sizeof(int), cudaMemcpyHostToDevice);
+	start = clock();
 	h_ans = h_count_active_particle(h_active, h_Np);
-	printf("cpu:%d\n", h_ans);
+	end = clock();
+	printf("cpu:%d, time:%d\n", h_ans, (int)(end - start));
 
+	start = clock();
+	cudaMemcpy(d_active, h_active, h_Np * sizeof(int), cudaMemcpyHostToDevice);
 	count_active_on_device(d_active, h_Np, num_block);
+	end = clock();
+	printf("time:%d\n", (int)(end - start));
 
 	cudaFree(d_active);
 	cudaFreeHost(h_active);
