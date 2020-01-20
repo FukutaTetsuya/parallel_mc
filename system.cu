@@ -377,11 +377,13 @@ __global__ void reduce_array_shared_memory(int *array, int *array_reduced, int d
 
 //------------------------------------------------------------------------------
 int main(void) {
+	//variables in host
+	printf("variables in host\n");
 	clock_t start, end;
 	int cell_per_axis;
 	int N_per_cell;
-
-	//variables in host
+	int t, t_max = 3;
+	int check_renew_list;
 	double *h_x;
 	double *h_y;
 	double h_L;
@@ -393,9 +395,11 @@ int main(void) {
 	int *h_active_DBG;
 	float *h_kick_storage;
 	size_t storage_size = 1600000;
+	size_t remaining_storage_size = 0;
 	curandGenerator_t gen_mt;
 
 	//variables in device
+	printf("variables in device\n");
 	double *d_x;
 	double *d_y;
 	int *d_active;
@@ -403,31 +407,30 @@ int main(void) {
 	int *d_belonging_cell;
 	int d_N_active;
 
-	//initialize
-	//--set up random number generators
-
-	//----host mt
+	printf("\ninitialize\n");
+	printf("--set up random number generators\n");
+	printf("----host mt\n");
 	//init_genrand(19970303);
 	init_genrand((unsigned int)time(NULL));
-	//----cuRAND host API
+	printf("----cuRAND host API\n");
 	curandCreateGenerator(&gen_mt, CURAND_RNG_PSEUDO_MTGP32);
-	//curandSetPseudoRandomGeneratorSeed(gen_mt, (unsigned long)time(NULL));
-	curandSetPseudoRandomGeneratorSeed(gen_mt, (unsigned long)19970303);
+	curandSetPseudoRandomGeneratorSeed(gen_mt, (unsigned long)time(NULL));
+	//curandSetPseudoRandomGeneratorSeed(gen_mt, (unsigned long)19970303);
 	curandSetGeneratorOffset(gen_mt, 0ULL);
 	curandSetGeneratorOrdering(gen_mt, CURAND_ORDERING_PSEUDO_DEFAULT);
 
-	//--set variable
+	printf("--set parameters\n");
 	h_Np = 18000;
 	h_L = 140.0;
 	cell_per_axis = (int)(h_L / 11.0) + 1;//renew list every 5 steps
 	N_per_cell = (h_Np * 13) / (cell_per_axis * cell_per_axis);
-	printf("cell per axis:%d N_per_cell:%d\n", cell_per_axis, N_per_cell);
+	printf("----cell per axis:%d N_per_cell:%d\n", cell_per_axis, N_per_cell);
 
 	cudaMemcpyToSymbol(d_Np, &h_Np, sizeof(int), 0, cudaMemcpyHostToDevice);
 	cudaMemcpyToSymbol(d_L, &h_L, sizeof(double), 0, cudaMemcpyHostToDevice);
 
-	//--allocate memory
-	//----memory on host
+	printf("--allocate memory\n");
+	printf("----memory on host\n");
 	cudaHostAlloc((void **)&h_x, h_Np * sizeof(double), cudaHostAllocMapped);
 	cudaHostAlloc((void **)&h_y, h_Np * sizeof(double), cudaHostAllocMapped);
 	cudaHostAlloc((void **)&h_active, h_Np * sizeof(int), cudaHostAllocMapped);
@@ -436,36 +439,34 @@ int main(void) {
 	h_active_DBG = (int *)calloc(h_Np, sizeof(int));
 	h_kick_storage = (float *)calloc(storage_size, sizeof(float));
 
-	//----memory on device
+	printf("----memory on device\n");
 	cudaMalloc((void **)&d_x, h_Np * sizeof(double));
 	cudaMalloc((void **)&d_y, h_Np * sizeof(double));
 	cudaMalloc((void **)&d_active, h_Np * sizeof(int));
 	cudaMalloc((void **)&d_cell_list, cell_per_axis * cell_per_axis * N_per_cell * sizeof(int));
 	cudaMalloc((void **)&d_belonging_cell, h_Np * sizeof(int));
 
-	//--place particles
+	printf("--place particles\n");
 	init_configuration(h_x, h_y, h_L, h_Np);
 	cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 
-	//--make first acriveness array
-	//----made in host
+	printf("--make first acriveness array\n");
+	printf("----made in host\n");
 	start = clock();
 	h_check_active(h_x, h_y, h_L, h_Np, h_active);
 	end = clock();
-	//printf("straighforward:%d [ms]\n\n", (int)((end - start)*1000 /CLOCKS_PER_SEC ));
-	printf("straighforward:%d\n\n", (int)(end - start));
+	printf("------%d\n", (int)(end - start));
 
-	//----made in host with cell list
+	printf("----made in host with cell list\n");
 	start = clock();
 	h_make_cell_list(h_x, h_y, h_L, h_Np, h_cell_list, cell_per_axis, N_per_cell);
 	h_check_active_with_list(h_x, h_y, h_L, h_Np, h_active_DBG, h_cell_list, cell_per_axis, N_per_cell);
 	end = clock();
-	printf("host cell list:%d\n", (int)(end - start));
+	printf("------%d, ", (int)(end - start));
 	h_DBG(h_active, h_active_DBG, h_Np);
-	printf("\n");
 
-	//----made in device global
+	printf("----made in device global\n");
 	start = clock();
 	cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
@@ -473,11 +474,10 @@ int main(void) {
 	cudaDeviceSynchronize();
 	cudaMemcpy(h_check_result, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
 	end = clock();
-	printf("gpu:%d\n", (int)(end - start));
+	printf("------%d, ", (int)(end - start));
 	h_DBG(h_active, h_check_result, h_Np);
-	printf("\n");
 
-	//----made in device global with list, list is made in device
+	printf("----made in device global with list, list is made in device\n");
 	start = clock();
 	cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
@@ -487,24 +487,52 @@ int main(void) {
 	cudaDeviceSynchronize();
 	cudaMemcpy(h_check_result, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
 	end = clock();
-	printf("gpu with gpu list:%d\n", (int)(end - start));
+	printf("------%d, ", (int)(end - start));
 	h_DBG(h_active, h_check_result, h_Np);
-	printf("\n");
 
-	//time loop
-	//--move particles
-	gen_array_kick(gen_mt, h_kick_storage, storage_size);
-	cudaDeviceSynchronize();
-	//--check activeness
-	//--count active particles
-	h_N_active = h_reduction_active_array(h_active, h_Np);
-	d_N_active = reduction_active_array_on_device(d_active, h_Np);
-	printf("res_Nactive:%d\n", h_N_active - d_N_active);
-	printf("active frac:%f\n", (double)d_N_active / (double)h_Np);
-	//--(sometimes) make new cell list
+	printf("\ntime loop\n");
+	check_renew_list = 5;
+	for(t = 0; t < t_max; t += 1) {
+		printf("--count active particles\n");
+		h_N_active = h_reduction_active_array(h_active, h_Np);
+		d_N_active = reduction_active_array_on_device(d_active, h_Np);
+		printf("----res_Nactive:%d\n", h_N_active - d_N_active);
+		printf("----active frac:%f\n", (double)d_N_active / (double)h_Np);
 
-	//finalize
-	//--free memory
+		if(remaining_storage_size < d_N_active * 2 || remaining_storage_size < h_Np * 0.1) {
+			printf("--make kick storage\n");
+			gen_array_kick(gen_mt, h_kick_storage, storage_size);
+			cudaDeviceSynchronize();
+		}
+		printf("--move particles\n");
+
+		if(check_renew_list == 5) {
+			printf("--make new cell list\n");
+			check_renew_list = 0;
+			cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
+			cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
+			d_make_cell_list<<<1, h_Np>>>(d_x, d_y, d_cell_list, d_belonging_cell, cell_per_axis, N_per_cell);
+			cudaDeviceSynchronize();
+		}
+		check_renew_list += 1;
+
+		printf("--check activeness\n");
+		h_check_active(h_x, h_y, h_L, h_Np, h_active);
+
+		cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
+		cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
+		d_check_active_with_list<<<1, h_Np>>>(d_x, d_y, d_active, d_cell_list, cell_per_axis, N_per_cell);
+		cudaDeviceSynchronize();
+		cudaMemcpy(h_check_result, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
+		printf("------%d:", t);
+		h_DBG(h_active, h_check_result, h_Np);
+	}
+
+
+
+	printf("\nfinalize\n");
+	printf("--free memory\n");
+	printf("----free memory on host\n");
 	cudaFreeHost(h_x);
 	cudaFreeHost(h_y);
 	cudaFreeHost(h_active);
@@ -512,13 +540,15 @@ int main(void) {
 	cudaFreeHost(h_cell_list);
 	free(h_active_DBG);
 	free(h_kick_storage);
-
+	printf("----free memory on device\n");
 	cudaFree(d_x);
 	cudaFree(d_y);
 	cudaFree(d_active);
 	cudaFree(d_cell_list);
 	cudaFree(d_belonging_cell);
-	//--destroy random number generator
+	printf("--destroy random number generator\n");
 	curandDestroyGenerator(gen_mt);
+
+	printf("\nreturn 0;\n");
 	return 0;
 }
