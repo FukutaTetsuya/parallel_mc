@@ -425,7 +425,7 @@ int main(void) {
 	time_t whole_start, whole_end;
 	int cell_per_axis;
 	int N_per_cell;
-	int t, t_max = 20;
+	int t, t_max = 200;
 	int check_renew_list;
 	double *h_x;
 	double *h_y;
@@ -437,7 +437,7 @@ int main(void) {
 	int *h_cell_list;
 	int *h_active_DBG;
 	float *h_kick_storage;
-	size_t storage_size = 1600000;
+	size_t storage_size = 4000000;
 	size_t consumed_storage_size;
 	curandGenerator_t gen_mt;
 
@@ -482,6 +482,7 @@ int main(void) {
 	cudaHostAlloc((void **)&h_cell_list, cell_per_axis * cell_per_axis * N_per_cell * sizeof(int), cudaHostAllocMapped);
 	h_active_DBG = (int *)calloc(h_Np, sizeof(int));
 	h_kick_storage = (float *)calloc(storage_size, sizeof(float));
+	if(h_kick_storage == NULL) {printf("memory shortage\n"); return 0;}
 
 	printf("----memory on device\n");
 	cudaMalloc((void **)&d_x, h_Np * sizeof(double));
@@ -543,20 +544,22 @@ int main(void) {
 	for(t = 0; t < t_max; t += 1) {
 		printf("--t=%d\n", t);
 		printf("--count active particles\n");
-		h_N_active = h_reduction_active_array(h_active, h_Np);
+		//h_N_active = h_reduction_active_array(h_active, h_Np);
 		d_N_active = reduction_active_array_on_device(d_active, h_Np);
-		printf("----res_Nactive:%d\n", h_N_active - d_N_active);
+		//printf("----res_Nactive:%d\n", h_N_active - d_N_active);
 		printf("----active frac:%f\n", (double)d_N_active / (double)h_Np);
+		printf("----active num:%d\n", d_N_active);
 
-		if(consumed_storage_size > storage_size - d_N_active * 4 || consumed_storage_size > storage_size - h_Np * 0.2) {
-			printf("--make kick storage\n");
+		if(storage_size - consumed_storage_size < d_N_active * 6 || storage_size - consumed_storage_size < h_Np * 0.2) {
+			printf("--make kick storage----------------------------------------\n");
 			gen_array_kick_on_device(gen_mt, h_kick_storage, storage_size);
 			cudaDeviceSynchronize();
 			consumed_storage_size = 0;
 		}
 		printf("--move particles\n");
-		consumed_storage_size += 2 * d_N_active;
 		h_kick_particles(h_x, h_y, h_active, h_L, h_Np, h_N_active, h_kick_storage, consumed_storage_size);	
+		consumed_storage_size += 2 * d_N_active;
+		printf("----consumed kick array storage:%d\n", consumed_storage_size);
 
 		if(check_renew_list == 5) {
 			printf("--make new cell list\n");
@@ -569,8 +572,8 @@ int main(void) {
 		check_renew_list += 1;
 
 		printf("--check activeness\n");
-		printf("----check activeness on host\n");
-		h_check_active(h_x, h_y, h_L, h_Np, h_active);
+		//printf("----check activeness on host\n");
+		//h_check_active(h_x, h_y, h_L, h_Np, h_active);
 
 		/*printf("----check activeness on device with list\n");
 		cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
@@ -588,10 +591,10 @@ int main(void) {
 		cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 		d_check_active<<<NUM_BLOCK, NUM_THREAD>>>(d_x, d_y, d_active);
 		cudaDeviceSynchronize();
-		cudaMemcpy(h_check_result, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
-		//cudaMemcpy(h_active, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
-		printf("----");
-		h_DBG(h_active, h_check_result, h_Np);
+		//cudaMemcpy(h_check_result, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(h_active, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
+		//printf("----");
+		//h_DBG(h_active, h_check_result, h_Np);
 	}
 
 
