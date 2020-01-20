@@ -1,13 +1,12 @@
 /*
  * Cell(i, j) = cell[i + j * n]
-
-
  */
 #include<stdio.h>
 #include<math.h>
 #include<stdlib.h>
 #include<string.h>
 #include<time.h>
+#include<curand.h>
 #include"mt.h"
 
 __device__ __constant__ int d_Np;
@@ -97,7 +96,7 @@ void h_check_active_with_list(double *h_x, double *h_y, double h_L, int h_Np, in
 	}
 }
 
-int h_count_active_particle(int *h_active, int h_Np) {
+int h_reduction_active_array(int *h_active, int h_Np) {
 	int i;
 	int sum;
 	sum = 0;
@@ -107,7 +106,7 @@ int h_count_active_particle(int *h_active, int h_Np) {
 	return sum;
 }
 
-int count_active_on_device(int *d_active, int h_Np) {
+int reduction_active_array_on_device(int *d_active, int h_Np) {
 	int i, j, k;
 	int i_temp;
 	int *d_reduction[2];
@@ -172,6 +171,66 @@ int h_make_cell_list(double *h_x, double *h_y, double h_L, int h_Np, int *h_cell
 	return 0;
 }
 
+void gen_array_kick(curandGenerator_t gen_mt, float *h_kick_storage, size_t storage_size) {
+	float *d_array_temp;
+	float *h_array_temp;
+	float *h_array_kick;
+	size_t generate_size = 16384;
+	int i, j;
+	int if_break;
+	int starting_point, ending_point;
+	float x, y;
+	double l;
+
+	if(cudaSuccess != cudaMalloc((void **)&d_array_temp, generate_size * sizeof(float))) {
+		printf("failed to alloc on device\n");
+	}
+	h_array_temp = (float *)calloc(generate_size , sizeof(float));
+	h_array_kick = (float *)calloc(generate_size , sizeof(float));
+	if(h_array_temp == NULL || h_array_kick == NULL) {
+		printf("failed to alloc on host\n");
+	}
+
+	i = 0;
+	if_break = 0;
+	starting_point = 0;
+	ending_point= 0;
+
+	while(i < storage_size) {
+		curandGenerateUniform(gen_mt, d_array_temp, generate_size);
+		cudaDeviceSynchronize();
+		cudaMemcpy(h_array_temp, d_array_temp, generate_size * sizeof(float), cudaMemcpyDeviceToHost);
+
+		starting_point = ending_point;
+		i = 0;
+		for(j = 0; j < generate_size; j += 2) {
+			x = 1.0 - 2.0 * h_array_temp[j];
+			y = 1.0 - 2.0 * h_array_temp[j + 1];
+			l = x * x + y * y;
+			if(l <= 1.0) {
+				l = sqrt(l);
+				h_array_kick[i] = x * l * 0.5;
+				h_array_kick[i + 1] = y * l * 0.5;
+				i += 2;
+				ending_point += 2;
+			}
+			if(ending_point >= storage_size - 1) {
+				if_break = 1;
+				//printf("broke at ending_point:%d\n", ending_point);
+				break;
+			}
+		}
+		memcpy(&h_kick_storage[starting_point], h_array_kick, i * sizeof(float));
+		if(if_break == 1) {
+			break;
+		}
+	}
+
+
+	cudaFree(d_array_temp);
+	free(h_array_temp);
+	free(h_array_kick);
+}
 
 //device functions--------------------------------------------------------------
 __global__ void d_check_active(double *d_x, double *d_y, int *d_active) {
@@ -332,6 +391,9 @@ int main(void) {
 	int h_N_active;
 	int *h_cell_list;
 	int *h_active_DBG;
+	float *h_kick_storage;
+	size_t storage_size = 1600000;
+	curandGenerator_t gen_mt;
 
 	//variables in device
 	double *d_x;
@@ -342,8 +404,17 @@ int main(void) {
 	int d_N_active;
 
 	//initialize
+	//--set up random number generators
+
+	//----host mt
 	//init_genrand(19970303);
-	init_genrand((int)time(NULL));
+	init_genrand((unsigned int)time(NULL));
+	//----cuRAND host API
+	curandCreateGenerator(&gen_mt, CURAND_RNG_PSEUDO_MTGP32);
+	//curandSetPseudoRandomGeneratorSeed(gen_mt, (unsigned long)time(NULL));
+	curandSetPseudoRandomGeneratorSeed(gen_mt, (unsigned long)19970303);
+	curandSetGeneratorOffset(gen_mt, 0ULL);
+	curandSetGeneratorOrdering(gen_mt, CURAND_ORDERING_PSEUDO_DEFAULT);
 
 	//--set variable
 	h_Np = 18000;
@@ -363,6 +434,7 @@ int main(void) {
 	cudaHostAlloc((void **)&h_check_result, h_Np * sizeof(int), cudaHostAllocMapped);
 	cudaHostAlloc((void **)&h_cell_list, cell_per_axis * cell_per_axis * N_per_cell * sizeof(int), cudaHostAllocMapped);
 	h_active_DBG = (int *)calloc(h_Np, sizeof(int));
+	h_kick_storage = (float *)calloc(storage_size, sizeof(float));
 
 	//----memory on device
 	cudaMalloc((void **)&d_x, h_Np * sizeof(double));
@@ -421,10 +493,12 @@ int main(void) {
 
 	//time loop
 	//--move particles
+	gen_array_kick(gen_mt, h_kick_storage, storage_size);
+	cudaDeviceSynchronize();
 	//--check activeness
 	//--count active particles
-	h_N_active = h_count_active_particle(h_active, h_Np);
-	d_N_active = count_active_on_device(d_active, h_Np);
+	h_N_active = h_reduction_active_array(h_active, h_Np);
+	d_N_active = reduction_active_array_on_device(d_active, h_Np);
 	printf("res_Nactive:%d\n", h_N_active - d_N_active);
 	printf("active frac:%f\n", (double)d_N_active / (double)h_Np);
 	//--(sometimes) make new cell list
@@ -437,11 +511,14 @@ int main(void) {
 	cudaFreeHost(h_check_result);
 	cudaFreeHost(h_cell_list);
 	free(h_active_DBG);
+	free(h_kick_storage);
 
 	cudaFree(d_x);
 	cudaFree(d_y);
 	cudaFree(d_active);
 	cudaFree(d_cell_list);
 	cudaFree(d_belonging_cell);
+	//--destroy random number generator
+	curandDestroyGenerator(gen_mt);
 	return 0;
 }
