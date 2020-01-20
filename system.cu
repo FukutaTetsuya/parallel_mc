@@ -171,7 +171,7 @@ int h_make_cell_list(double *h_x, double *h_y, double h_L, int h_Np, int *h_cell
 	return 0;
 }
 
-void gen_array_kick(curandGenerator_t gen_mt, float *h_kick_storage, size_t storage_size) {
+void gen_array_kick_on_device(curandGenerator_t gen_mt, float *h_kick_storage, size_t storage_size) {
 	float *d_array_temp;
 	float *h_array_temp;
 	float *h_array_kick;
@@ -230,6 +230,30 @@ void gen_array_kick(curandGenerator_t gen_mt, float *h_kick_storage, size_t stor
 	cudaFree(d_array_temp);
 	free(h_array_temp);
 	free(h_array_kick);
+}
+
+int h_kick_particles(double *h_x, double *h_y, int *h_active, double h_L, int h_Np, int h_N_active, float *h_kick_storage, int consumed_storage_size) {
+	int i;
+	int num = 0;
+
+	for(i = 0; i < h_Np; i += 1) {
+		if(h_active[i] == 1) {
+			h_x[i] += h_kick_storage[2 * i + consumed_storage_size];
+			if(h_x[i] < 0) {
+				h_x[i] += h_L;
+			} else if(h_x[i] > h_L) {
+				h_x[i] -= h_L;
+			}
+			h_y[i] += h_kick_storage[2 * i + 1 + consumed_storage_size];
+			if(h_y[i] < 0) {
+				h_y[i] += h_L;
+			} else if(h_y[i] > h_L) {
+				h_y[i] -= h_L;
+			}
+			num += 1;
+		}
+	}
+	return num;
 }
 
 //device functions--------------------------------------------------------------
@@ -395,7 +419,7 @@ int main(void) {
 	int *h_active_DBG;
 	float *h_kick_storage;
 	size_t storage_size = 1600000;
-	size_t remaining_storage_size = 0;
+	size_t consumed_storage_size;
 	curandGenerator_t gen_mt;
 
 	//variables in device
@@ -410,12 +434,12 @@ int main(void) {
 	printf("\ninitialize\n");
 	printf("--set up random number generators\n");
 	printf("----host mt\n");
-	//init_genrand(19970303);
-	init_genrand((unsigned int)time(NULL));
+	init_genrand(19970303);
+	//init_genrand((unsigned int)time(NULL));
 	printf("----cuRAND host API\n");
 	curandCreateGenerator(&gen_mt, CURAND_RNG_PSEUDO_MTGP32);
-	curandSetPseudoRandomGeneratorSeed(gen_mt, (unsigned long)time(NULL));
-	//curandSetPseudoRandomGeneratorSeed(gen_mt, (unsigned long)19970303);
+	//curandSetPseudoRandomGeneratorSeed(gen_mt, (unsigned long)time(NULL));
+	curandSetPseudoRandomGeneratorSeed(gen_mt, (unsigned long)19970303);
 	curandSetGeneratorOffset(gen_mt, 0ULL);
 	curandSetGeneratorOrdering(gen_mt, CURAND_ORDERING_PSEUDO_DEFAULT);
 
@@ -492,19 +516,24 @@ int main(void) {
 
 	printf("\ntime loop\n");
 	check_renew_list = 5;
+	consumed_storage_size = storage_size;
 	for(t = 0; t < t_max; t += 1) {
+		printf("--t=%d\n", t);
 		printf("--count active particles\n");
 		h_N_active = h_reduction_active_array(h_active, h_Np);
 		d_N_active = reduction_active_array_on_device(d_active, h_Np);
 		printf("----res_Nactive:%d\n", h_N_active - d_N_active);
 		printf("----active frac:%f\n", (double)d_N_active / (double)h_Np);
 
-		if(remaining_storage_size < d_N_active * 2 || remaining_storage_size < h_Np * 0.1) {
+		if(consumed_storage_size > storage_size - d_N_active * 4 || consumed_storage_size < storage_size - h_Np * 0.2) {
 			printf("--make kick storage\n");
-			gen_array_kick(gen_mt, h_kick_storage, storage_size);
+			gen_array_kick_on_device(gen_mt, h_kick_storage, storage_size);
 			cudaDeviceSynchronize();
+			consumed_storage_size = 0;
 		}
 		printf("--move particles\n");
+		consumed_storage_size += 2 * d_N_active;
+		h_kick_particles(h_x, h_y, h_active, h_L, h_Np, h_N_active, h_kick_storage, consumed_storage_size);	
 
 		if(check_renew_list == 5) {
 			printf("--make new cell list\n");
@@ -521,10 +550,12 @@ int main(void) {
 
 		cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 		cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
+		d_make_cell_list<<<1, h_Np>>>(d_x, d_y, d_cell_list, d_belonging_cell, cell_per_axis, N_per_cell);
+		cudaDeviceSynchronize();
 		d_check_active_with_list<<<1, h_Np>>>(d_x, d_y, d_active, d_cell_list, cell_per_axis, N_per_cell);
 		cudaDeviceSynchronize();
 		cudaMemcpy(h_check_result, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
-		printf("------%d:", t);
+		printf("----");
 		h_DBG(h_active, h_check_result, h_Np);
 	}
 
