@@ -434,8 +434,8 @@ int main(void) {
 	printf("\ninitialize\n");
 	printf("--set up random number generators\n");
 	printf("----host mt\n");
-	init_genrand(19970303);
-	//init_genrand((unsigned int)time(NULL));
+	//init_genrand(19970303);
+	init_genrand((unsigned int)time(NULL));
 	printf("----cuRAND host API\n");
 	curandCreateGenerator(&gen_mt, CURAND_RNG_PSEUDO_MTGP32);
 	//curandSetPseudoRandomGeneratorSeed(gen_mt, (unsigned long)time(NULL));
@@ -482,15 +482,16 @@ int main(void) {
 	end = clock();
 	printf("------%d\n", (int)(end - start));
 
-	printf("----made in host with cell list\n");
+	/*printf("----made in host with cell list\n");
 	start = clock();
 	h_make_cell_list(h_x, h_y, h_L, h_Np, h_cell_list, cell_per_axis, N_per_cell);
 	h_check_active_with_list(h_x, h_y, h_L, h_Np, h_active_DBG, h_cell_list, cell_per_axis, N_per_cell);
 	end = clock();
 	printf("------%d, ", (int)(end - start));
 	h_DBG(h_active, h_active_DBG, h_Np);
+	*/
 
-	printf("----made in device global\n");
+	/*printf("----made in device global\n");
 	start = clock();
 	cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
@@ -500,6 +501,7 @@ int main(void) {
 	end = clock();
 	printf("------%d, ", (int)(end - start));
 	h_DBG(h_active, h_check_result, h_Np);
+	*/
 
 	printf("----made in device global with list, list is made in device\n");
 	start = clock();
@@ -514,7 +516,7 @@ int main(void) {
 	printf("------%d, ", (int)(end - start));
 	h_DBG(h_active, h_check_result, h_Np);
 
-	printf("\ntime loop\n");
+	/*printf("\ntime loop\n");
 	check_renew_list = 5;
 	consumed_storage_size = storage_size;
 	for(t = 0; t < t_max; t += 1) {
@@ -557,7 +559,7 @@ int main(void) {
 		cudaMemcpy(h_check_result, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
 		printf("----");
 		h_DBG(h_active, h_check_result, h_Np);
-	}
+	}*/
 
 
 
