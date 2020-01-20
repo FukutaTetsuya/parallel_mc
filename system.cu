@@ -168,6 +168,10 @@ int h_make_cell_list(double *h_x, double *h_y, double h_L, int h_Np, int *h_cell
 			}
 		}
 	}
+
+	for(i = 0; i < 10; i += 1) {
+	printf("h_cell_list[%d]:%d\n", i * N_per_cell, h_cell_list[i * N_per_cell]);
+	}
 	return 0;
 }
 
@@ -296,7 +300,7 @@ __global__ void d_check_active(double *d_x, double *d_y, int *d_active) {
 
 __global__ void d_check_active_with_list(double *d_x, double *d_y, int *d_active, int *d_cell_list, int cell_per_axis, int N_per_cell) {
 	//d_L and d_Np are already declared as __global__ const
-	int j;
+	int i, j;
 	int x_c, y_c;
 	int cell_id, N_in_cell;
 	int pair_id;
@@ -304,17 +308,18 @@ __global__ void d_check_active_with_list(double *d_x, double *d_y, int *d_active
 	double dx, dy, dr_square;
 	double diameter_square = 1.0;
 	i_global = blockDim.x * blockIdx.x + threadIdx.x;
-	if(i_global < d_Np) {
-		d_active[i_global] = 0;
-		x_c = (int)(d_x[i_global] * (double)cell_per_axis / d_L);
-		y_c = (int)(d_y[i_global] * (double)cell_per_axis / d_L);
+
+	for(i = i_global; i < d_Np; i += NUM_BLOCK * NUM_THREAD) {
+		d_active[i] = 0;
+		x_c = (int)(d_x[i] * (double)cell_per_axis / d_L);
+		y_c = (int)(d_y[i] * (double)cell_per_axis / d_L);
 		cell_id = x_c + y_c * cell_per_axis;
 		N_in_cell = d_cell_list[cell_id * N_per_cell];	
 		for(j = 1; j <= N_in_cell; j += 1) {
 			pair_id = d_cell_list[cell_id * N_per_cell + j];
-			if(i_global == pair_id) {continue;}
-			dx = d_x[i_global] - d_x[pair_id];
-			dy = d_y[i_global] - d_y[pair_id];
+			if(i== pair_id) {continue;}
+			dx = d_x[i] - d_x[pair_id];
+			dy = d_y[i] - d_y[pair_id];
 			if(dx < -0.5 * d_L) {
 				dx += d_L;
 			} else if(dx > 0.5 * d_L) {
@@ -327,41 +332,54 @@ __global__ void d_check_active_with_list(double *d_x, double *d_y, int *d_active
 			}
 			dr_square = dx * dx + dy * dy;
 			if(diameter_square > dr_square) {
-				d_active[i_global] = 1;
+				d_active[i] = 1;
 			}
 		}
 	}
 }
 
-__global__ void d_make_cell_list(double *d_x, double *d_y, int *d_cell_list, int *d_belonging_cell, int cell_per_axis, int N_per_cell) {
-	//this func needs equal to or more than Np threads
-	int j, k, l;
+__global__ void d_make_belonging_cell_list(double *d_x, double *d_y, int *d_cell_list, int *d_belonging_cell, int cell_per_axis, int N_per_cell) {
+	int i;
 	int i_global;
 	int x_cell, y_cell;
 	int cell_id;
 
 	i_global = blockDim.x * blockIdx.x + threadIdx.x;
-	if(i_global < d_Np) {
+	for(i = i_global; i < d_Np; i += NUM_BLOCK * NUM_THREAD) {
 		x_cell = (int)(d_x[i_global] * (double)cell_per_axis / d_L);
 		y_cell = (int)(d_y[i_global] * (double)cell_per_axis / d_L);
 		cell_id = x_cell + y_cell * cell_per_axis;
 		d_belonging_cell[i_global] = cell_id;
 	}
-	__syncthreads();
-	if(i_global < cell_per_axis * cell_per_axis) {
-		d_cell_list[i_global * N_per_cell] = 0;
-		x_cell = i_global % cell_per_axis;
-		y_cell = i_global / cell_per_axis;
+}
+__global__ void d_make_cell_list(double *d_x, double *d_y, int *d_cell_list, int *d_belonging_cell, int cell_per_axis, int N_per_cell) {
+	int i, j, k, l;
+	int i_global;
+	int x_cell, y_cell;
+	int cell_id;
+
+	i_global = blockDim.x * blockIdx.x + threadIdx.x;
+
+	for(i = i_global; i < cell_per_axis * cell_per_axis; i += NUM_BLOCK * NUM_THREAD) {
+		x_cell = i % cell_per_axis;
+		y_cell = i / cell_per_axis;
+		d_cell_list[i * N_per_cell] = 0;
 		for(j = x_cell - 1; j <= x_cell + 1; j += 1) {
 			for(k = y_cell - 1; k <= y_cell + 1; k += 1) {
 				cell_id = ((j + cell_per_axis) % cell_per_axis) + ((k + cell_per_axis) % cell_per_axis) * cell_per_axis;
 				for(l = 0; l < d_Np; l += 1) {
 					if(d_belonging_cell[l] == cell_id) {
-						d_cell_list[i_global * N_per_cell] += 1;
-						d_cell_list[i_global * N_per_cell +  d_cell_list[i_global * N_per_cell] ] = l;
+						d_cell_list[i * N_per_cell] += 1;
+						d_cell_list[i * N_per_cell +  d_cell_list[i * N_per_cell] ] = l;
 					}
 				}
 			}
+		}
+	}
+	__syncthreads();
+	if(i_global == 0) {
+		for(i = 0; i < 10; i += 1) {
+		printf("d_cell_list[%d]:%d\n", i * N_per_cell, d_cell_list[i * N_per_cell]);
 		}
 	}
 }
@@ -404,9 +422,10 @@ int main(void) {
 	//variables in host
 	printf("variables in host\n");
 	clock_t start, end;
+	time_t whole_start, whole_end;
 	int cell_per_axis;
 	int N_per_cell;
-	int t, t_max = 3;
+	int t, t_max = 20;
 	int check_renew_list;
 	double *h_x;
 	double *h_y;
@@ -432,10 +451,11 @@ int main(void) {
 	int d_N_active;
 
 	printf("\ninitialize\n");
+	whole_start = time(NULL);
 	printf("--set up random number generators\n");
 	printf("----host mt\n");
-	//init_genrand(19970303);
-	init_genrand((unsigned int)time(NULL));
+	init_genrand(19970303);
+	//init_genrand((unsigned int)time(NULL));
 	printf("----cuRAND host API\n");
 	curandCreateGenerator(&gen_mt, CURAND_RNG_PSEUDO_MTGP32);
 	//curandSetPseudoRandomGeneratorSeed(gen_mt, (unsigned long)time(NULL));
@@ -444,11 +464,11 @@ int main(void) {
 	curandSetGeneratorOrdering(gen_mt, CURAND_ORDERING_PSEUDO_DEFAULT);
 
 	printf("--set parameters\n");
-	h_Np = 18000;
+	h_Np = 9900;
 	h_L = 140.0;
 	cell_per_axis = (int)(h_L / 11.0) + 1;//renew list every 5 steps
 	N_per_cell = (h_Np * 13) / (cell_per_axis * cell_per_axis);
-	printf("----cell per axis:%d N_per_cell:%d\n", cell_per_axis, N_per_cell);
+	printf("----cell per axis:%d N_per_cell:%d pack. frac. %.5f\n", cell_per_axis, N_per_cell, (double)h_Np * PI / 4.0 / h_L / h_L);
 
 	cudaMemcpyToSymbol(d_Np, &h_Np, sizeof(int), 0, cudaMemcpyHostToDevice);
 	cudaMemcpyToSymbol(d_L, &h_L, sizeof(double), 0, cudaMemcpyHostToDevice);
@@ -482,16 +502,15 @@ int main(void) {
 	end = clock();
 	printf("------%d\n", (int)(end - start));
 
-	/*printf("----made in host with cell list\n");
+	printf("----made in host with cell list\n");
 	start = clock();
 	h_make_cell_list(h_x, h_y, h_L, h_Np, h_cell_list, cell_per_axis, N_per_cell);
 	h_check_active_with_list(h_x, h_y, h_L, h_Np, h_active_DBG, h_cell_list, cell_per_axis, N_per_cell);
 	end = clock();
 	printf("------%d, ", (int)(end - start));
-	h_DBG(h_active, h_active_DBG, h_Np);
-	*/
+	h_DBG(h_active, h_active_DBG, h_Np);	
 
-	/*printf("----made in device global\n");
+	printf("----made in device global\n");
 	start = clock();
 	cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
@@ -501,22 +520,24 @@ int main(void) {
 	end = clock();
 	printf("------%d, ", (int)(end - start));
 	h_DBG(h_active, h_check_result, h_Np);
-	*/
 
-	printf("----made in device global with list, list is made in device\n");
+	/*printf("----made in device global with list, list is made in device\n");
 	start = clock();
 	cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
-	d_make_cell_list<<<1, h_Np>>>(d_x, d_y, d_cell_list, d_belonging_cell, cell_per_axis, N_per_cell);
+	d_make_belonging_cell_list<<<NUM_BLOCK, NUM_THREAD>>>(d_x, d_y, d_cell_list, d_belonging_cell, cell_per_axis, N_per_cell);
 	cudaDeviceSynchronize();
-	d_check_active_with_list<<<1, h_Np>>>(d_x, d_y, d_active, d_cell_list, cell_per_axis, N_per_cell);
+	d_make_cell_list<<<NUM_BLOCK, NUM_THREAD>>>(d_x, d_y, d_cell_list, d_belonging_cell, cell_per_axis, N_per_cell);
+	cudaDeviceSynchronize();
+	d_check_active_with_list<<<NUM_BLOCK, NUM_THREAD>>>(d_x, d_y, d_active, d_cell_list, cell_per_axis, N_per_cell);
 	cudaDeviceSynchronize();
 	cudaMemcpy(h_check_result, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
 	end = clock();
 	printf("------%d, ", (int)(end - start));
 	h_DBG(h_active, h_check_result, h_Np);
+	*/
 
-	/*printf("\ntime loop\n");
+	printf("\ntime loop\n");
 	check_renew_list = 5;
 	consumed_storage_size = storage_size;
 	for(t = 0; t < t_max; t += 1) {
@@ -527,7 +548,7 @@ int main(void) {
 		printf("----res_Nactive:%d\n", h_N_active - d_N_active);
 		printf("----active frac:%f\n", (double)d_N_active / (double)h_Np);
 
-		if(consumed_storage_size > storage_size - d_N_active * 4 || consumed_storage_size < storage_size - h_Np * 0.2) {
+		if(consumed_storage_size > storage_size - d_N_active * 4 || consumed_storage_size > storage_size - h_Np * 0.2) {
 			printf("--make kick storage\n");
 			gen_array_kick_on_device(gen_mt, h_kick_storage, storage_size);
 			cudaDeviceSynchronize();
@@ -548,8 +569,10 @@ int main(void) {
 		check_renew_list += 1;
 
 		printf("--check activeness\n");
+		printf("----check activeness on host\n");
 		h_check_active(h_x, h_y, h_L, h_Np, h_active);
 
+		/*printf("----check activeness on device with list\n");
 		cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 		cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
 		d_make_cell_list<<<1, h_Np>>>(d_x, d_y, d_cell_list, d_belonging_cell, cell_per_axis, N_per_cell);
@@ -559,7 +582,17 @@ int main(void) {
 		cudaMemcpy(h_check_result, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
 		printf("----");
 		h_DBG(h_active, h_check_result, h_Np);
-	}*/
+		*/
+		printf("----check activeness on device without list\n");
+		cudaMemcpy(d_x, h_x, h_Np * sizeof(double), cudaMemcpyHostToDevice);
+		cudaMemcpy(d_y, h_y, h_Np * sizeof(double), cudaMemcpyHostToDevice);
+		d_check_active<<<NUM_BLOCK, NUM_THREAD>>>(d_x, d_y, d_active);
+		cudaDeviceSynchronize();
+		cudaMemcpy(h_check_result, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
+		//cudaMemcpy(h_active, d_active, h_Np * sizeof(int), cudaMemcpyDeviceToHost);
+		printf("----");
+		h_DBG(h_active, h_check_result, h_Np);
+	}
 
 
 
@@ -582,6 +615,8 @@ int main(void) {
 	printf("--destroy random number generator\n");
 	curandDestroyGenerator(gen_mt);
 
+	whole_end = time(NULL);
+	printf("%d sec\n", (int)(whole_end - whole_start));
 	printf("\nreturn 0;\n");
 	return 0;
 }
