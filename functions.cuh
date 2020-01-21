@@ -96,6 +96,9 @@ void h_DBG(int *A, int *B, int dim) {
 	double res = 0.0;
 	for(i = 0; i < dim; i += 1) {
 		res += (A[i] - B[i]) * (A[i] - B[i]);
+		if((A[i] - B[i]) != 0) {
+			printf("%d, %d, %d\n", i, A[i], B[i]);
+		}
 	}
 	printf("res %f\n", res);
 }
