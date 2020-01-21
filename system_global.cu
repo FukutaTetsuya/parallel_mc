@@ -25,7 +25,7 @@ int main(void) {
 	time_t whole_start, whole_end;
 	int cell_per_axis;
 	int N_per_cell;
-	int t, t_max = 5;
+	int t, t_max = 1000;
 	int check_renew_list;
 	double *h_x;
 	double *h_y;

@@ -20,7 +20,7 @@ __global__ void d_make_belonging_cell_list(double *d_x, double *d_y, int *d_cell
 __global__ void d_check_active_with_belonging_cell_list(double *d_x, double *d_y, int *d_active, int *d_belonging_cell, int cell_per_axis, int N_per_cell);
 __global__ void d_make_cell_list_from_belonging_cell_list(double *d_x, double *d_y, int *d_cell_list, int *d_belonging_cell, int cell_per_axis, int N_per_cell);
 int reduction_active_array_on_device(int *d_active, int h_Np);
-int h_kick_particles(double *h_x, double *h_y, int *h_active, double h_L, int h_Np, int h_N_active, float *h_kick_storage, int consumed_storage_size);
+void h_kick_particles(double *h_x, double *h_y, int *h_active, double h_L, int h_Np, int h_N_active, float *h_kick_storage, int consumed_storage_size);
 void gen_array_kick_on_device(curandGenerator_t gen_mt, float *h_kick_storage, size_t storage_size);
 void init_configuration(double *h_x, double *h_y, double h_L, int h_Np);
 
@@ -50,28 +50,26 @@ int reduction_active_array_on_device(int *d_active, int h_Np) {
 	return h_answer;
 }
 
-int h_kick_particles(double *h_x, double *h_y, int *h_active, double h_L, int h_Np, int h_N_active, float *h_kick_storage, int consumed_storage_size) {
+void h_kick_particles(double *h_x, double *h_y, int *h_active, double h_L, int h_Np, int h_N_active, float *h_kick_storage, int consumed_storage_size) {
 	int i;
-	int num = 0;
-
+	int sum = 0;
 	for(i = 0; i < h_Np; i += 1) {
 		if(h_active[i] == 1) {
-			h_x[i] += h_kick_storage[2 * i + consumed_storage_size];
+			h_x[i] += h_kick_storage[2 * sum + consumed_storage_size];
 			if(h_x[i] < 0) {
 				h_x[i] += h_L;
 			} else if(h_x[i] > h_L) {
 				h_x[i] -= h_L;
 			}
-			h_y[i] += h_kick_storage[2 * i + 1 + consumed_storage_size];
+			h_y[i] += h_kick_storage[2 * sum + 1 + consumed_storage_size];
 			if(h_y[i] < 0) {
 				h_y[i] += h_L;
 			} else if(h_y[i] > h_L) {
 				h_y[i] -= h_L;
 			}
-			num += 1;
+			sum += 1;
 		}
 	}
-	return num;
 }
 __global__ void d_check_active(double *d_x, double *d_y, int *d_active) {
 	int i_global;
